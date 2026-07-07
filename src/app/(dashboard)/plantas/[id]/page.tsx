@@ -909,8 +909,11 @@ export default function PlantaDetailPage({ params }: { params: Promise<{ id: str
   const [s1CicloMinutos, setS1CicloMinutos] = useState(0);
   const [s1CicloSegundos, setS1CicloSegundos] = useState(0);
   const [s1CicloMax, setS1CicloMax] = useState("");
+  const [s1DisponibleHoras, setS1DisponibleHoras] = useState(0);
+  const [s1DisponibleMinutos, setS1DisponibleMinutos] = useState(0);
   const [s1ProdMensual, setS1ProdMensual] = useState("");
   const [s1Saved, setS1Saved] = useState(false);
+
 
   // Section 2 cut type state
   const [tipoCorteBarra, setTipoCorteBarra] = useState<"shear" | "saw" | "ninguno" | "">("");
@@ -978,7 +981,14 @@ export default function PlantaDetailPage({ params }: { params: Promise<{ id: str
       setS1CicloMinutos(isNaN(rawMin) ? 0 : Math.min(5, Math.max(0, rawMin)));
       setS1CicloSegundos(isNaN(rawSec) ? 0 : Math.min(60, Math.max(0, rawSec)));
       setS1CicloMax(selectedPrensa.tiempoCicloMax || "");
+      const disponibleStr = selectedPrensa.tiempoCicloMax || "00:00";
+      const [horasStr, minsStr] = disponibleStr.split(":");
+      const rawHoras = parseInt(horasStr, 10);
+      const rawMins = parseInt(minsStr, 10);
+      setS1DisponibleHoras(isNaN(rawHoras) ? 0 : Math.min(6, Math.max(0, rawHoras)));
+      setS1DisponibleMinutos(isNaN(rawMins) ? 0 : Math.min(60, Math.max(0, rawMins)));
       setS1ProdMensual(selectedPrensa.produccionMensual?.toString() || "");
+
 
       const pull = selectedPrensa.pullers && selectedPrensa.pullers.length > 0 ? selectedPrensa.pullers[0] : null;
       setPullerTipo(pull?.tipo || "");
@@ -1034,23 +1044,11 @@ export default function PlantaDetailPage({ params }: { params: Promise<{ id: str
     setS1CicloMin(`${String(s1CicloMinutos).padStart(2, '0')}:${String(s1CicloSegundos).padStart(2, '0')}`);
   }, [s1CicloMinutos, s1CicloSegundos]);
 
-  // Autocalculate s1ProdMensual based on diameter, cycle time and productivity percentage
+  // Combine hours and minutes into s1CicloMax (Tiempo disponible por turno)
   useEffect(() => {
-    const dNum = parseFloat(s1Diametro) || 8;
-    const weightKg = 0.15 * Math.pow(dNum, 3);
-    const cycleSec = (s1CicloMinutos * 60) + s1CicloSegundos;
-    const efectividadNum = parseFloat(s1Efectividad) || 0;
+    setS1CicloMax(`${String(s1DisponibleHoras).padStart(2, '0')}:${String(s1DisponibleMinutos).padStart(2, '0')}`);
+  }, [s1DisponibleHoras, s1DisponibleMinutos]);
 
-    if (cycleSec > 0 && efectividadNum > 0) {
-      const billetsPerHour = 3600 / cycleSec;
-      const tonsPerHour = (billetsPerHour * weightKg) / 1000;
-      const monthlyHours = 320; // realistic working hours/month
-      const calculatedProd = Math.round(tonsPerHour * (efectividadNum / 100) * monthlyHours);
-      setS1ProdMensual(calculatedProd.toString());
-    } else {
-      setS1ProdMensual("0");
-    }
-  }, [s1Diametro, s1CicloMinutos, s1CicloSegundos, s1Efectividad]);
 
   if (!planta) {
     return (
@@ -1169,12 +1167,13 @@ export default function PlantaDetailPage({ params }: { params: Promise<{ id: str
       aleaciones: s1SelectedAlloys,
       efectividadPct: s1Efectividad ? Number(s1Efectividad) : undefined,
       tiempoCicloMin: s1CicloMin,
-      produccionMensual: s1ProdMensual ? Number(s1ProdMensual) : undefined
+      tiempoCicloMax: s1CicloMax
     });
     setS1Saved(true);
     setOpenSections(prev => ({ ...prev, 1: false }));
     setTimeout(() => setS1Saved(false), 2000);
   };
+
 
   const handleResetCorteBarra = async () => {
     if (!selectedPrensa) return;
@@ -1686,53 +1685,31 @@ export default function PlantaDetailPage({ params }: { params: Promise<{ id: str
                       </div>
                     </FormField>
                     <FormField 
-                      label="Porcentaje de productividad de la prensa" 
+                      label="Promedio de tochos extruidos por turno (8 horas)" 
                       tooltip={
-                        <div style={{ display: "flex", flexDirection: "column", gap: "0.6rem" }}>
+                        <div style={{ display: "flex", flexDirection: "column", gap: "0.4rem" }}>
                           <p style={{ fontWeight: 700, color: "var(--text-primary)", fontSize: "0.8rem", borderBottom: "1px solid var(--bg-border)", paddingBottom: "0.25rem", margin: 0 }}>
-                            📈 Porcentaje de Productividad de la Prensa
+                            Tochos por Turno (8 horas)
                           </p>
                           <p style={{ color: "var(--text-secondary)", margin: 0, fontSize: "0.75rem", lineHeight: "1.4" }}>
-                            <strong>1. Capacidad Teórica (100%):</strong> Es la cantidad máxima de aluminio que la prensa podría extruir si trabajara sin parar, a velocidad máxima, sin fallas y sin generar chatarra.
+                            Es la cantidad promedio de tochos/billets de aluminio que se extruyen de forma efectiva en un turno estándar de 8 horas de trabajo.
                           </p>
-                          <p style={{ color: "var(--text-secondary)", margin: 0, fontSize: "0.75rem", lineHeight: "1.4" }}>
-                            <strong>2. Las Pérdidas Reales (¿Por qué no llegamos al 100%?):</strong>
-                          </p>
-                          <p style={{ color: "var(--text-muted)", margin: 0, fontSize: "0.72rem", fontStyle: "italic" }}>
-                            La productividad real se ve afectada por tres factores principales:
-                          </p>
-                          <ul style={{ listStyleType: "disc", paddingLeft: "1.1rem", color: "var(--text-secondary)", display: "flex", flexDirection: "column", gap: "0.4rem", margin: 0, fontSize: "0.72rem", lineHeight: "1.4" }}>
-                            <li>
-                              <strong style={{ color: "var(--accent-amber)" }}>Tiempos de Preparación (Setups):</strong> Paros programados para cambiar dados (moldes), ajustar herramientas o cambiar de aleación.
-                            </li>
-                            <li>
-                              <strong style={{ color: "var(--interlub-red)" }}>Paros No Programados:</strong> Fallas mecánicas, eléctricas, falta de personal o esperas por enfriamiento del horno.
-                            </li>
-                            <li>
-                              <strong style={{ color: "var(--accent-blue)" }}>Pérdidas de Velocidad y Calidad (Scrap):</strong> Extrusión a velocidad reducida por límites de temperatura y generación de chatarra.
-                            </li>
-                          </ul>
                         </div>
                       }
                     >
-                      <div className="flex items-center gap-1">
-                        <select
-                          className="form-input"
-                          value={s1Efectividad ? Math.round(parseFloat(s1Efectividad) || 0).toFixed(1) : ""}
-                          onChange={e => {
-                            const val = parseFloat(e.target.value);
-                            setS1Efectividad(isNaN(val) ? "" : val.toFixed(1));
-                          }}
-                          style={{ textAlign: "center", height: "36px", cursor: "pointer" }}
-                        >
-                          <option value="">— Seleccionar % —</option>
-                          {Array.from({ length: 101 }, (_, i) => i).map(pct => (
-                            <option key={pct} value={pct.toFixed(1)}>
-                              {pct}%
-                            </option>
-                          ))}
-                        </select>
-                      </div>
+                      <input
+                        className="form-input"
+                        type="text"
+                        inputMode="numeric"
+                        pattern="[0-9]*"
+                        placeholder="Ej. 120"
+                        value={s1Efectividad}
+                        onChange={e => {
+                          const clean = e.target.value.replace(/\D/g, "");
+                          setS1Efectividad(clean);
+                        }}
+                        style={{ height: "36px" }}
+                      />
                     </FormField>
 
                     <FormField 
@@ -1883,15 +1860,152 @@ export default function PlantaDetailPage({ params }: { params: Promise<{ id: str
                       </div>
                     </FormField>
 
-                    <FormField label="Producción mensual (tons/mes)" hint="Calculado automáticamente en base al tocho, ciclo y productividad">
-                      <input
-                        className="form-input"
-                        type="number"
-                        value={s1ProdMensual}
-                        readOnly
-                        disabled
-                        style={{ opacity: 0.85, cursor: "not-allowed", backgroundColor: "var(--bg-secondary)", fontWeight: 600 }}
-                      />
+                    <FormField 
+                      label="Tiempo disponible por turno (8 horas)" 
+                      tooltip={
+                        <div style={{ display: "flex", flexDirection: "column", gap: "0.4rem" }}>
+                          <p style={{ fontWeight: 700, color: "var(--text-primary)", fontSize: "0.8rem", borderBottom: "1px solid var(--bg-border)", paddingBottom: "0.25rem", margin: 0 }}>
+                            ⏱️ Tiempo Disponible por Turno
+                          </p>
+                          <p style={{ color: "var(--text-secondary)", margin: 0, fontSize: "0.75rem", lineHeight: "1.4" }}>
+                            Es el tiempo programado disponible de la prensa en un turno de 8 horas (descontando comidas u otros paros fijos programados).
+                          </p>
+                        </div>
+                      }
+                    >
+                      <div style={{ display: "flex", alignItems: "start", gap: "0.5rem" }}>
+                        {/* Horas Stepper */}
+                        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", flex: 1 }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: "4px", width: "100%" }}>
+                            <button
+                              type="button"
+                              className="btn-ghost"
+                              onClick={() => setS1DisponibleHoras(prev => Math.max(0, prev - 1))}
+                              style={{
+                                width: "36px",
+                                height: "36px",
+                                padding: 0,
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "center",
+                                fontSize: "1.1rem",
+                                fontWeight: 700,
+                                borderRadius: "6px",
+                                flexShrink: 0
+                              }}
+                            >
+                              -
+                            </button>
+                            <input
+                              className="form-input"
+                              type="text"
+                              inputMode="numeric"
+                              pattern="[0-9]*"
+                              value={s1DisponibleHoras}
+                              onChange={e => {
+                                const clean = e.target.value.replace(/\D/g, "");
+                                const val = parseInt(clean, 10);
+                                if (isNaN(val)) {
+                                  setS1DisponibleHoras(0);
+                                } else {
+                                  setS1DisponibleHoras(Math.min(6, Math.max(0, val)));
+                                }
+                              }}
+                              style={{ textAlign: "center", width: "100%", height: "36px" }}
+                            />
+                            <button
+                              type="button"
+                              className="btn-ghost"
+                              onClick={() => setS1DisponibleHoras(prev => Math.min(6, prev + 1))}
+                              style={{
+                                width: "36px",
+                                height: "36px",
+                                padding: 0,
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "center",
+                                fontSize: "1.1rem",
+                                fontWeight: 700,
+                                borderRadius: "6px",
+                                flexShrink: 0
+                              }}
+                            >
+                              +
+                            </button>
+                          </div>
+                          <span style={{ fontSize: "0.65rem", color: "var(--text-muted)", marginTop: "4px" }}>Horas (0-6)</span>
+                        </div>
+
+                        <span style={{ fontSize: "1.2rem", fontWeight: 700, height: "36px", display: "flex", alignItems: "center", color: "var(--text-secondary)" }}>:</span>
+
+                        {/* Minutos Stepper */}
+                        <div style={{ display: "flex", flexDirection: "column", alignItems: "center", flex: 1 }}>
+                          <div style={{ display: "flex", alignItems: "center", gap: "4px", width: "100%" }}>
+                            <button
+                              type="button"
+                              className="btn-ghost"
+                              onClick={() => setS1DisponibleMinutos(prev => {
+                                if (prev <= 0) return 60;
+                                return prev - 1;
+                              })}
+                              style={{
+                                width: "36px",
+                                height: "36px",
+                                padding: 0,
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "center",
+                                fontSize: "1.1rem",
+                                fontWeight: 700,
+                                borderRadius: "6px",
+                                flexShrink: 0
+                              }}
+                            >
+                              -
+                            </button>
+                            <input
+                              className="form-input"
+                              type="text"
+                              inputMode="numeric"
+                              pattern="[0-9]*"
+                              value={s1DisponibleMinutos}
+                              onChange={e => {
+                                const clean = e.target.value.replace(/\D/g, "");
+                                const val = parseInt(clean, 10);
+                                if (isNaN(val)) {
+                                  setS1DisponibleMinutos(0);
+                                } else {
+                                  setS1DisponibleMinutos(Math.min(60, Math.max(0, val)));
+                                }
+                              }}
+                              style={{ textAlign: "center", width: "100%", height: "36px" }}
+                            />
+                            <button
+                              type="button"
+                              className="btn-ghost"
+                              onClick={() => setS1DisponibleMinutos(prev => {
+                                if (prev >= 60) return 0;
+                                return prev + 1;
+                              })}
+                              style={{
+                                width: "36px",
+                                height: "36px",
+                                padding: 0,
+                                display: "flex",
+                                alignItems: "center",
+                                justifyContent: "center",
+                                fontSize: "1.1rem",
+                                fontWeight: 700,
+                                borderRadius: "6px",
+                                flexShrink: 0
+                              }}
+                            >
+                              +
+                            </button>
+                          </div>
+                          <span style={{ fontSize: "0.65rem", color: "var(--text-muted)", marginTop: "4px" }}>Minutos (0-60)</span>
+                        </div>
+                      </div>
                     </FormField>
 
                     <div style={{ gridColumn: "1/-1", display: "flex", alignItems: "center", justifyContent: "space-between", gap: "2px" }}>
@@ -1917,7 +2031,7 @@ export default function PlantaDetailPage({ params }: { params: Promise<{ id: str
 
             {/* Sec 2 */}
             <div id="sec-2" className="form-section">
-              <SectionHeader num={2} title="Sección 2 — Corte de Barra (Hot Shear [corte de barra/billet con cizalla] / Hot Saw [corte de barra/billet en caliente])" status={secciones[1].status as any} isOpen={!!openSections[2]} onToggle={() => toggleSection(2)} />
+              <SectionHeader num={2} title="Sección 2 - Corte de barra con sierra o cizalla" status={secciones[1].status as any} isOpen={!!openSections[2]} onToggle={() => toggleSection(2)} />
               <div className={`accordion-wrapper ${openSections[2] ? "open" : ""}`}>
                 <div className="accordion-inner">
                   <div className="form-section-content" style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>

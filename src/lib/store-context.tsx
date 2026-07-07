@@ -577,8 +577,9 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         pullers: keysToCamel(p.pullers || [])
       }));
 
-      const sum = currentPrensas.reduce((acc, pr) => acc + pr.pctCompletitud, 0);
+      const sum = currentPrensas.reduce((acc: number, pr: any) => acc + (pr.pctCompletitud || 0), 0);
       const avg = Math.round(sum / currentPrensas.length);
+
       const newStatus: CaptureStatus = avg >= 90 ? 'completa' : avg >= 10 ? 'en_progreso' : 'pendiente';
 
       await updatePlanta(plantaId, { pctCompletitud: avg, estadoCaptura: newStatus });
