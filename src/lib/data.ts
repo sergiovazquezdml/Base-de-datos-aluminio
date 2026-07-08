@@ -60,7 +60,7 @@ export const CATALOGO_APLICACIONES: CatalogoAplicacion[] = [
   { id: 'app-6',  areaId: 'area-3', nombre: 'Puller / Jalador',                           nombreEn: 'Puller',                 nombreFormularioFisico: 'Puller / Jalador',                                      descripcion: 'Sistema de jalado del perfil extruido', sinonimos: ['Jalador'],                              orden: 6, activa: true },
   { id: 'app-7',  areaId: 'area-3', nombre: 'Sierra de Corte de Perfil en Caliente',      nombreEn: 'Hot Profile Saw',        nombreFormularioFisico: 'Sierra de Corte de Perfil en Caliente',                descripcion: 'Sierra que corta el perfil a temperatura elevada a la salida de la prensa', sinonimos: [],  orden: 7, activa: true },
   // Sección D — Mesa de Tensado
-  { id: 'app-8',  areaId: 'area-4', nombre: 'Mesa de Tensado (Stretcher)',                nombreEn: 'Stretcher',              nombreFormularioFisico: 'Mesa de Tensado',                                       descripcion: 'Sistema de estirado y enderezado del perfil extruido', sinonimos: ['Stretcher'],             orden: 8, activa: true },
+  { id: 'app-8',  areaId: 'area-4', nombre: 'Mesa de Tensado (Stretcher)',                nombreEn: 'Stretcher',              nombreFormularioFisico: 'Mesa de Tensado',                                       descripcion: 'Sistema de estirado y enderezado del perfil extruido', sinonimos: ['Stretcher'],             orden: 8, activa: false },
   // Sección E — Sierra en Frío
   { id: 'app-9',  areaId: 'area-5', nombre: 'Sierra de Corte de Perfil en Frío',          nombreEn: 'Cold Profile Saw',       nombreFormularioFisico: 'Sierra de Corte de Perfil en Frío',                    descripcion: 'Corte final del perfil a temperatura ambiente', sinonimos: [],                               orden: 9, activa: true },
   // Sección F — Horno de Envejecimiento
@@ -74,6 +74,7 @@ export const CATALOGO_APLICACIONES: CatalogoAplicacion[] = [
   { id: 'app-15', areaId: 'area-7', nombre: 'Cadenas de Línea de Pintura',                nombreEn: 'Paint Line Chains',      nombreFormularioFisico: 'Cadenas de Línea de Pintura',                          descripcion: 'Cadenas transportadoras en proceso de pintura electrostática', sinonimos: [],                orden: 15, activa: true },
   { id: 'app-16', areaId: 'area-7', nombre: 'Guías de Línea de Anodizado',                nombreEn: 'Anodizing Line Guides',  nombreFormularioFisico: 'Guías de Línea de Anodizado',                          descripcion: 'Guías y contactos en proceso de anodizado', sinonimos: [],                                   orden: 16, activa: true },
   { id: 'app-17', areaId: 'area-7', nombre: 'Carros de Envejecimiento',                   nombreEn: 'Aging Carts',            nombreFormularioFisico: 'Carros de Envejecimiento',                             descripcion: 'Rodillos y ruedas de carros que transportan perfiles al horno', sinonimos: [],              orden: 17, activa: true },
+  { id: 'app-18', areaId: 'area-7', nombre: 'Horno de Lacado',                          nombreEn: 'Lacquer Oven',           nombreFormularioFisico: 'Horno de Lacado',                                      descripcion: 'Horno para el curado del lacado del perfil', sinonimos: [],                            orden: 18, activa: true },
 ];
 
 // ─── Catálogo de Capacidades de Prensa (toneladas) ───────────
@@ -87,9 +88,11 @@ export const CAPACIDADES_PRENSA = [
 // ─── Catálogo de Diámetros de Tocho (pulgadas) ───────────────
 
 export const DIAMETROS_BILLET = [
-  '2"', '3"', '4"', '5"', '6"', '7"', '8"', '9"', '10"',
+  '4"', '5"', '6"', '7"', '8"', '9"', '10"',
   '11"', '12"', '13"', '14"', '15"', '16"', '17"', '18"',
-  '19"', '20"',
+  '19"', '20"', '21"', '22"', '23"', '24"', '25"', '26"',
+  '27"', '28"', '29"', '30"', '31"', '32"', '33"', '34"',
+  '35"', '36"',
 ];
 
 // ─── Productos Interlub (semilla) ─────────────────────────────
@@ -104,7 +107,9 @@ export const PRODUCTOS_INTERLUB: ProductoInterlub[] = [
   { id: 'pi-15', nombreComercial: 'Interoil Cut HTE',    familia: 'Fluidos de corte',           descripcionTecnica: 'Lubricante premium de alta estabilidad térmica para corte.', viscosidad: 'ISO VG 32', puntoInflamacion: '220°C', baseLubricante: 'Sintética', precioReferencia: 8.30, unidad: 'litro', activo: true, beneficiosClave: 'Extrema estabilidad a altas temperaturas, prolonga vida de herramienta' },
   { id: 'pi-16', nombreComercial: 'Thermaplex LCM 2',    familia: 'Grasas industriales',        descripcionTecnica: 'Grasa compleja de litio de alto rendimiento para rodamientos y condiciones extremas.', viscosidad: 'NLGI 2', puntoInflamacion: '250°C', baseLubricante: 'Mineral', precioReferencia: 7.80, unidad: 'kg', activo: true, beneficiosClave: 'Excelente estabilidad al cizallamiento, alta resistencia al lavado por agua, protección anticorrosiva' },
   { id: 'pi-17', nombreComercial: 'Cad Tex HT 220',      familia: 'Lubricantes de cadena',      descripcionTecnica: 'Lubricante sintético para cadenas sometidas a altas temperaturas en hornos y sistemas transportadores.', viscosidad: 'ISO VG 220', puntoInflamacion: '280°C', baseLubricante: 'Sintética', precioReferencia: 11.20, unidad: 'litro', activo: true, beneficiosClave: 'Mínima evaporación, sin formación de lodos o carbón, excelente lubricidad a alta temperatura' },
-  { id: 'pi-18', nombreComercial: 'Cad Tex HtT 320',     familia: 'Lubricantes de cadena',      descripcionTecnica: 'Aceite sintético de alta viscosidad para lubricación de cadenas a temperaturas extremadamente altas.', viscosidad: 'ISO VG 320', puntoInflamacion: '300°C', baseLubricante: 'Sintética', precioReferencia: 12.50, unidad: 'litro', activo: true, beneficiosClave: 'Estabilidad superior a la oxidación, excelente adherencia, prolonga la vida de la cadena' }
+  { id: 'pi-18', nombreComercial: 'Cad Tex HtT 320',     familia: 'Lubricantes de cadena',      descripcionTecnica: 'Aceite sintético de alta viscosidad para lubricación de cadenas a temperaturas extremadamente altas.', viscosidad: 'ISO VG 320', puntoInflamacion: '300°C', baseLubricante: 'Sintética', precioReferencia: 12.50, unidad: 'litro', activo: true, beneficiosClave: 'Estabilidad superior a la oxidación, excelente adherencia, prolonga la vida de la cadena' },
+  { id: 'pi-19', nombreComercial: 'Interforge D',       familia: 'Lubricantes para extrusión', descripcionTecnica: 'Lubricante premium para dummy block y herramientas en extrusión.', viscosidad: 'ISO VG 68', puntoInflamacion: '250°C', baseLubricante: 'Sintética', precioReferencia: 9.00, unidad: 'litro', activo: true, beneficiosClave: 'Excelente adherencia, protección contra desgaste térmico' },
+  { id: 'pi-20', nombreComercial: 'Extruoil B7',        familia: 'Lubricantes para extrusión', descripcionTecnica: 'Aceite lubricante especializado de alto rendimiento para extrusión.', viscosidad: 'ISO VG 46', puntoInflamacion: '240°C', baseLubricante: 'Sintética', precioReferencia: 9.50, unidad: 'litro', activo: true, beneficiosClave: 'Mínimo residuo, alta estabilidad de película' }
 ];
 
 // ─── Productos Competidores (semilla) ─────────────────────────

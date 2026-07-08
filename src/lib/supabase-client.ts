@@ -394,7 +394,9 @@ const mockSupabase = {
   }
 };
 
-const realSupabase = createClient(supabaseUrl, supabaseAnonKey);
+const realSupabase = (supabaseUrl && supabaseAnonKey)
+  ? createClient(supabaseUrl, supabaseAnonKey)
+  : (null as unknown as ReturnType<typeof createClient>);
 
 // Export the Mock Client if useMock is true, otherwise the real Supabase client
 export const supabase = useMock

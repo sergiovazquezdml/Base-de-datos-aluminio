@@ -83,6 +83,7 @@ interface StoreContextType {
     tipoLubricacion?: 'manual' | 'automatico' | 'sin_lubricacion';
     formaAplicacion?: string;
     productoCompetidorId?: string;
+    notes?: string;
   }) => Promise<void>;
 
   saveHornoMovimiento: (prensaId: string, movimiento: 'cadena' | 'rieles' | 'rodajas') => Promise<void>;
@@ -592,8 +593,8 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     let fieldsCount = 0;
     let filledFields = 0;
 
-    // Section 1 - General (4 key fields remaining after removal of model, year, cut length, and billet supplier)
-    const keyFields = ['identificacionInterna', 'oemId', 'capacidadTons', 'diametroBillet'];
+    // Section 1 - General (5 key fields: ID, OEM, Capacidad, Diámetro, and Tipo/Modelo)
+    const keyFields = ['identificacionInterna', 'oemId', 'capacidadTons', 'diametroBillet', 'modelo'];
     keyFields.forEach(f => {
       fieldsCount++;
       if (prensa[f as keyof Prensa]) filledFields++;
@@ -608,7 +609,11 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
     const app4 = prensa.aplicaciones?.find(a => a.catalogoAplicacionId === 'app-4');
     const lubricacionSeleccionada = (app3?.camposEspeciales?.lubricacion_seleccionada || app4?.camposEspeciales?.lubricacion_seleccionada) || '';
 
-    const requiredApps = ['app-5', 'app-7', 'app-8', 'app-9', 'app-10'];
+    const app7 = prensa.aplicaciones?.find(a => a.catalogoAplicacionId === 'app-7');
+    const ubicacionSierra = app7?.camposEspeciales?.ubicacion_sierra || '';
+
+    const requiredApps = ['app-5', 'app-7', 'app-9', 'app-10', 'app-18'];
+
     if (corteSeleccionado === 'shear') {
       requiredApps.push('app-1');
     } else if (corteSeleccionado === 'saw') {
@@ -788,7 +793,7 @@ export function StoreProvider({ children }: { children: React.ReactNode }) {
         tipoLubricacion: pullerData.tipoLubricacion || 'manual',
         formaAplicacion: pullerData.formaAplicacion || '',
         productoCompetidorId: pullerData.productoCompetidorId || null,
-        notes: '',
+        notes: pullerData.notes || '',
         deleted: false
       };
 

@@ -16,12 +16,61 @@ import {
 
 type SectionStatus = "completed" | "in_progress" | "pending";
 
+function isAppComplete(app: any, num: string) {
+  if (!app) return false;
+  if (app.estado === "sin_lubricar") return true;
+  if (app.estado === "lubricada_interlub") {
+    if (!app.productoInterlubActivoId) return false;
+  } else if (app.estado === "lubricada_competencia") {
+    const compName = app.camposEspeciales?.nombre_producto_competencia || app.camposEspeciales?.productoCompetidorNombre;
+    const compProv = app.camposEspeciales?.proveedor_competencia;
+    if (!compName || !compProv) return false;
+  } else {
+    return false; // desconocido or empty
+  }
+
+  // Common fields for lubricated
+  if (!app.metodoAplicacion) return false;
+  if (app.consumoEstimado === undefined || app.consumoEstimado === null || app.consumoEstimado <= 0) return false;
+
+  const hasFreqAplicacion = !num.startsWith("5.") && !num.startsWith("6.");
+  if (hasFreqAplicacion && !app.frecuenciaAplicacion) return false;
+
+  // Dilution (only Section 2 and 3)
+  const isSec2Or3 = num.startsWith("2.") || num.startsWith("3.");
+  if (isSec2Or3) {
+    const seDiluye = app.camposEspeciales?.se_diluye;
+    if (seDiluye === undefined || seDiluye === null) return false;
+    if (seDiluye === true && !app.camposEspeciales?.relacion_dilucion) return false;
+  }
+
+  // Auto dosing system (Section 2, 3.2, 3.3)
+  const hasAutoSystem = num.startsWith("2.") || num === "3.2" || num === "3.3";
+  if (hasAutoSystem && app.metodoAplicacion === "automatico") {
+    if (!app.camposEspeciales?.tipo_sistema_automatico || !app.camposEspeciales?.detalle_sistema_automatico) return false;
+  }
+
+  // Section 7.1 (CNC machines count for Procesos de valor agregado)
+  if (num === "7.1") {
+    if (app.camposEspeciales?.cantidad_maquinas_cnc === undefined || app.camposEspeciales?.cantidad_maquinas_cnc === null || app.camposEspeciales?.cantidad_maquinas_cnc <= 0) return false;
+  }
+
+  return true;
+}
+
+function isAppInProgress(app: any, num: string) {
+  if (!app) return false;
+  if (isAppComplete(app, num)) return false;
+  if (app.estado && app.estado !== "desconocido" && app.estado !== "") return true;
+  return false;
+}
+
 const ALLOY_OPTIONS = ["6063", "6061", "6005", "6082", "6105", "6463", "3003", "1050", "1350", "7075"];
 
 function SectionHeader({
   num, title, status, isOpen, onToggle
 }: {
-  num: number; title: string; status: SectionStatus; isOpen: boolean; onToggle: () => void;
+  num: number; title: React.ReactNode; status: SectionStatus; isOpen: boolean; onToggle: () => void;
 }) {
   const statusConfig = {
     completed: { icon: CheckCircle2, color: "var(--accent-green)", label: "Completa" },
@@ -75,7 +124,7 @@ function FormField({
   return (
     <div style={{ position: "relative", zIndex: showTooltip ? 100 : 1 }}>
       <div className="flex items-center gap-1.5 mb-1.5" style={{ position: "relative" }}>
-        <label className="form-label" style={{ marginBottom: 0, flex: 1, minWidth: 0, lineHeight: 1.4 }}>
+        <label className="form-label" style={{ marginBottom: 0, lineHeight: 1.4 }}>
           {label} {required && <span style={{ color: "var(--interlub-red)" }}>*</span>}
         </label>
         {tooltip && (
@@ -179,7 +228,7 @@ const getFrecuenciaOptions = (num: string) => {
 };
 
 const COMPETIDOR_OPTIONS = ["Motul Baraldi (Presezzi)", "Amcol", "Brugarolas", "Castool"];
-const DILUCION_OPTIONS = ["Puro", "1:5", "1:10", "1:15", "1:20", "1:30", "1:50", "1:80", "1:100"];
+const DILUCION_OPTIONS = ["1:2", "1:3", "1:4", "1:5", "1:6", "1:7", "1:8", "1:9", "1:10", "1:11", "1:12", "1:13", "1:14", "1:15", "1:16", "1:17", "1:18", "1:19", "1:20"];
 
 function AplicacionBlock({
   num, titulo, sinonimos, catalogoId, areaId, prensa, onSave,
@@ -208,12 +257,16 @@ function AplicacionBlock({
 
   // Sync frecuencia state when freqSelect or freqInput changes
   useEffect(() => {
+    if (num === "4.1") {
+      setFrecuencia("Todos los ciclos");
+      return;
+    }
     if (freqSelect === "Otro") {
       setFrecuencia(freqInput);
     } else {
       setFrecuencia(freqSelect);
     }
-  }, [freqSelect, freqInput]);
+  }, [freqSelect, freqInput, num]);
 
   // Custom states for Section 2 & 3.2
   const [nombreProductoCompManual, setNombreProductoCompManual] = useState(existingApp?.camposEspeciales?.nombre_producto_competencia || "");
@@ -225,7 +278,7 @@ function AplicacionBlock({
   // Custom states for Dilution
   const [seDiluye, setSeDiluye] = useState<string>(
     existingApp?.camposEspeciales?.se_diluye === true ? "si" :
-    existingApp?.camposEspeciales?.se_diluye === false ? "no" : "sin_info"
+    existingApp?.camposEspeciales?.se_diluye === false ? "no" : ""
   );
   const [relacionDilucion, setRelacionDilucion] = useState<string>(existingApp?.camposEspeciales?.relacion_dilucion || "");
   const [validationError, setValidationError] = useState("");
@@ -278,15 +331,15 @@ function AplicacionBlock({
     setUnidad("ml");
     
     // Load frequency
-    const freq = existingApp?.frecuenciaAplicacion || "";
+    const freq = num === "4.1" ? "Todos los ciclos" : (existingApp?.frecuenciaAplicacion || "");
     setFrecuencia(freq);
     if (freq === "") {
       setFreqSelect("");
       setFreqInput("");
-    } else if (FRECUENCIA_OPTIONS.includes(freq)) {
+    } else if (num !== "4.1" && FRECUENCIA_OPTIONS.includes(freq)) {
       setFreqSelect(freq);
       setFreqInput("");
-    } else {
+    } else if (num !== "4.1") {
       setFreqSelect("Otro");
       setFreqInput(freq);
     }
@@ -313,7 +366,7 @@ function AplicacionBlock({
 
     setSeDiluye(
       existingApp?.camposEspeciales?.se_diluye === true ? "si" :
-      existingApp?.camposEspeciales?.se_diluye === false ? "no" : "sin_info"
+      existingApp?.camposEspeciales?.se_diluye === false ? "no" : ""
     );
     
     // Load dilution
@@ -381,15 +434,13 @@ function AplicacionBlock({
         }
       }
 
-      if (estado === "lubricada_competencia" || estado === "lubricada_interlub") {
+      const isSec2Or3 = num.startsWith("2.") || num.startsWith("3.");
+      if (isSec2Or3 && (estado === "lubricada_competencia" || estado === "lubricada_interlub")) {
         if (seDiluye === "si") {
           camposEspeciales.se_diluye = true;
           camposEspeciales.relacion_dilucion = relacionDilucion;
         } else if (seDiluye === "no") {
           camposEspeciales.se_diluye = false;
-          delete camposEspeciales.relacion_dilucion;
-        } else if (seDiluye === "sin_info") {
-          camposEspeciales.se_diluye = null;
           delete camposEspeciales.relacion_dilucion;
         } else {
           delete camposEspeciales.se_diluye;
@@ -462,15 +513,13 @@ function AplicacionBlock({
       }
     }
 
-    if (estado === "lubricada_competencia" || estado === "lubricada_interlub") {
+    const isSec2Or3 = num.startsWith("2.") || num.startsWith("3.");
+    if (isSec2Or3 && (estado === "lubricada_competencia" || estado === "lubricada_interlub")) {
       if (seDiluye === "si") {
         camposEspeciales.se_diluye = true;
         camposEspeciales.relacion_dilucion = relacionDilucion;
       } else if (seDiluye === "no") {
         camposEspeciales.se_diluye = false;
-        delete camposEspeciales.relacion_dilucion;
-      } else if (seDiluye === "sin_info") {
-        camposEspeciales.se_diluye = null;
         delete camposEspeciales.relacion_dilucion;
       } else {
         delete camposEspeciales.se_diluye;
@@ -509,6 +558,7 @@ function AplicacionBlock({
   const isSection2 = num.startsWith("2.");
   const isCorteOSierra = num === "2.1" || num === "2.2" || num === "4.1" || num === "6.1";
   const hasAutoSystem = num.startsWith("2.") || num === "3.2" || num === "3.3";
+  const isSec2Or3 = num.startsWith("2.") || num.startsWith("3.");
 
   return (
     <div 
@@ -544,8 +594,7 @@ function AplicacionBlock({
               {[
                 { label: "Lubricada por Interlub", value: "lubricada_interlub" },
                 { label: "Lubricada por Competencia", value: "lubricada_competencia" },
-                { label: "Sin lubricar", value: "sin_lubricar" },
-                { label: "Desconocido", value: "desconocido" },
+                { label: "Sin lubricar", value: "sin_lubricar" }
               ].map(o => {
                 const isSelected = estado !== "desconocido" && estado !== "";
                 const isDisabled = isSelected && estado !== o.value;
@@ -624,7 +673,15 @@ function AplicacionBlock({
               <select className="form-input" value={prodInt} onChange={e => setProdInt(e.target.value)}>
                 <option value="">— Seleccionar producto Interlub —</option>
                 <option value="pi-1">Interforge KI-C</option>
-                <option value="pi-8">Interforge KI</option>
+                <option value="pi-19">Interforge D</option>
+                <option value="pi-20">Extruoil B7</option>
+              </select>
+            ) : isSection2 ? (
+              <select className="form-input" value={prodInt} onChange={e => setProdInt(e.target.value)}>
+                <option value="">— Seleccionar producto Interlub —</option>
+                <option value="pi-7">Interoil Cut HTV</option>
+                <option value="pi-15">Interoil Cut HTE</option>
+                <option value="pi-1">Interforge KI-C</option>
               </select>
             ) : isCorteOSierra ? (
               <select className="form-input" value={prodInt} onChange={e => setProdInt(e.target.value)}>
@@ -651,13 +708,12 @@ function AplicacionBlock({
             onChange={setMetodo}
             options={[
               { label: "Manual", value: "manual" },
-              { label: "Automático", value: "automatico" },
-              { label: "Semi-automático", value: "semiautomatico" },
+              { label: "Automático", value: "automatico" }
             ]}
           />
         </FormField>
 
-        {(estado === "lubricada_competencia" || estado === "lubricada_interlub") && (
+        {(estado === "lubricada_competencia" || estado === "lubricada_interlub") && isSec2Or3 && (
           <>
             <FormField label="¿Se diluye el producto?">
               <RadioGroup
@@ -666,14 +722,25 @@ function AplicacionBlock({
                 onChange={setSeDiluye}
                 options={[
                   { label: "Sí", value: "si" },
-                  { label: "No", value: "no" },
-                  { label: "Sin información", value: "sin_info" },
+                  { label: "No", value: "no" }
                 ]}
               />
             </FormField>
 
             {seDiluye === "si" && (
-              <FormField label="Relación de dilución">
+              <FormField 
+                label="Relación de dilución"
+                tooltip={
+                  <div style={{ display: "flex", flexDirection: "column", gap: "0.4rem" }}>
+                    <p style={{ fontWeight: 700, color: "var(--text-primary)", fontSize: "0.8rem", borderBottom: "1px solid var(--bg-border)", paddingBottom: "0.25rem", margin: 0 }}>
+                      Relación de Dilución
+                    </p>
+                    <p style={{ color: "var(--text-secondary)", margin: 0, fontSize: "0.75rem", lineHeight: "1.4" }}>
+                      Indica cuánto producto se mezcla con agua. El primer número es la cantidad de producto y el segundo son las partes de agua. Ejemplo: 1:2 significa 1 parte de producto por 2 partes de agua.
+                    </p>
+                  </div>
+                }
+              >
                 <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
                   <select
                     className="form-input"
@@ -721,36 +788,68 @@ function AplicacionBlock({
           </>
         )}
 
-        <FormField label="Consumo estimado por ciclo (ml únicamente)" hint="Los consumos por aplicación no superan 1L por ciclo de lubricación">
+        <FormField 
+          label="CONSUMO POR CICLO DE LUBRICACIÓN (CAPTURAR EN ML)"
+          tooltip={
+            <div style={{ display: "flex", flexDirection: "column", gap: "0.4rem" }}>
+              <p style={{ fontWeight: 700, color: "var(--text-primary)", fontSize: "0.8rem", borderBottom: "1px solid var(--bg-border)", paddingBottom: "0.25rem", margin: 0 }}>
+                Consumo por Ciclo de Lubricación
+              </p>
+              <p style={{ color: "var(--text-secondary)", margin: 0, fontSize: "0.75rem", lineHeight: "1.4" }}>
+                Se debe medir de forma manual usando una probeta graduada para conocer el volumen exacto. Si no es posible medirlo directamente, se pueden preguntar las dimensiones del depósito de lubricante y cada cuánto tiempo lo rellenan, para así estimar el consumo por ciclo.
+              </p>
+            </div>
+          }
+        >
           <div className="flex items-center gap-2">
-            <input className="form-input" type="number" placeholder="0.00" value={consumo} onChange={e => setConsumo(e.target.value)} style={{ flex: 1 }} />
+            <input 
+              className="form-input" 
+              type="number" 
+              placeholder="0.00" 
+              min={0}
+              value={consumo} 
+              onChange={e => {
+                const val = e.target.value;
+                if (val === "") {
+                  setConsumo("");
+                  return;
+                }
+                const numVal = Number(val);
+                if (numVal >= 0) {
+                  setConsumo(val);
+                }
+              }} 
+              style={{ flex: 1 }} 
+            />
             <span style={{ fontSize: "0.85rem", color: "var(--text-secondary)", minWidth: "30px", textAlign: "right" }}>ml</span>
           </div>
         </FormField>
 
-        <FormField label="Frecuencia de aplicación">
-          <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
-            <select
-              className="form-input"
-              value={freqSelect}
-              onChange={e => setFreqSelect(e.target.value)}
-            >
-              <option value="">— Seleccionar frecuencia —</option>
-              {FRECUENCIA_OPTIONS.map(opt => (
-                <option key={opt} value={opt}>{opt}</option>
-              ))}
-              <option value="Otro">Otro (especificar)</option>
-            </select>
-            {freqSelect === "Otro" && (
-              <input
+        {num !== "4.1" && (
+          <FormField label="Frecuencia de aplicación">
+            <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
+              <select
                 className="form-input"
-                placeholder="Ej: Por turno, diario, etc..."
-                value={freqInput}
-                onChange={e => setFreqInput(e.target.value)}
-              />
-            )}
-          </div>
-        </FormField>
+                value={freqSelect}
+                onChange={e => setFreqSelect(e.target.value)}
+              >
+                <option value="">— Seleccionar frecuencia —</option>
+                {FRECUENCIA_OPTIONS.map(opt => (
+                  <option key={opt} value={opt}>{opt}</option>
+                ))}
+                <option value="Otro">Otro (especificar)</option>
+              </select>
+              {freqSelect === "Otro" && (
+                <input
+                  className="form-input"
+                  placeholder="Ej: Por turno, diario, etc..."
+                  value={freqInput}
+                  onChange={e => setFreqInput(e.target.value)}
+                />
+              )}
+            </div>
+          </FormField>
+        )}
 
         {num === "6.1" && (
           <FormField label="Cantidad de máquinas CNC de corte en la planta" hint="Este proceso es independiente de las prensas de extrusión">
@@ -758,9 +857,19 @@ function AplicacionBlock({
               type="number"
               className="form-input" 
               value={cantidadCnc} 
-              onChange={e => setCantidadCnc(e.target.value)} 
-              placeholder="Ej: 5" 
               min={1}
+              onChange={e => {
+                const val = e.target.value;
+                if (val === "") {
+                  setCantidadCnc("");
+                  return;
+                }
+                const numVal = Number(val);
+                if (numVal >= 1) {
+                  setCantidadCnc(val);
+                }
+              }} 
+              placeholder="Ej: 5" 
             />
           </FormField>
         )}
@@ -929,10 +1038,50 @@ export default function PlantaDetailPage({ params }: { params: Promise<{ id: str
   const [pullerForma, setPullerForma] = useState("");
   const [pullerProdComp, setPullerProdComp] = useState("");
   const [pullerSaved, setPullerSaved] = useState(false);
+  const [pullerEstado, setPullerEstado] = useState<"lubricada_interlub" | "lubricada_competencia" | "sin_lubricar" | "desconocido">("desconocido");
+  const [pullerProdCompNombre, setPullerProdCompNombre] = useState("");
+  const [pullerCompetidorNombre, setPullerCompetidorNombre] = useState("");
+  const [selectedPullerCompetidorDropdown, setSelectedPullerCompetidorDropdown] = useState("");
+  const [customPullerCompetidorInput, setCustomPullerCompetidorInput] = useState("");
+  const [pullerProdInt, setPullerProdInt] = useState("");
+  const [pullerConsumo, setPullerConsumo] = useState("");
+  const [pullerFrecuencia, setPullerFrecuencia] = useState("");
+  const [pullerConsumoUnidad, setPullerConsumoUnidad] = useState("Lt");
+  const [pullerFreqRelub, setPullerFreqRelub] = useState("");
+  const [pullerError, setPullerError] = useState("");
+  const [ubicacionSierra, setUbicacionSierra] = useState<"incluida" | "separada" | "">("");
 
-  // Section 7 Oven states
+  // Section 5 Oven states
+  const [hornoCantidad, setHornoCantidad] = useState("1");
   const [hornoMov, setHornoMov] = useState("");
+  const [hornoEstado, setHornoEstado] = useState<"lubricada_interlub" | "lubricada_competencia" | "sin_lubricar" | "desconocido">("desconocido");
+  const [hornoProdCompNombre, setHornoProdCompNombre] = useState("");
+  const [hornoCompetidorNombre, setHornoCompetidorNombre] = useState("");
+  const [selectedHornoCompetidorDropdown, setSelectedHornoCompetidorDropdown] = useState("");
+  const [customHornoCompetidorInput, setCustomHornoCompetidorInput] = useState("");
+  const [hornoProdInt, setHornoProdInt] = useState("");
+  const [hornoMetodo, setHornoMetodo] = useState("");
+  const [hornoConsumo, setHornoConsumo] = useState("");
+  const [hornoConsumoUnidad, setHornoConsumoUnidad] = useState("Lt");
+  const [hornoFreqRelub, setHornoFreqRelub] = useState("");
   const [hornoSaved, setHornoSaved] = useState(false);
+  const [hornoError, setHornoError] = useState("");
+
+  // Section 6 Lacado Oven states
+  const [lacadoTempMax, setLacadoTempMax] = useState("");
+  const [lacadoTiempoUso, setLacadoTiempoUso] = useState("8");
+  const [lacadoEstado, setLacadoEstado] = useState<"lubricada_interlub" | "lubricada_competencia" | "sin_lubricar" | "desconocido">("desconocido");
+  const [lacadoProdCompNombre, setLacadoProdCompNombre] = useState("");
+  const [lacadoCompetidorNombre, setLacadoCompetidorNombre] = useState("");
+  const [selectedLacadoCompetidorDropdown, setSelectedLacadoCompetidorDropdown] = useState("");
+  const [customLacadoCompetidorInput, setCustomLacadoCompetidorInput] = useState("");
+  const [lacadoProdInt, setLacadoProdInt] = useState("");
+  const [lacadoMetodo, setLacadoMetodo] = useState("");
+  const [lacadoConsumo, setLacadoConsumo] = useState("");
+  const [lacadoConsumoUnidad, setLacadoConsumoUnidad] = useState("Lt");
+  const [lacadoFreqRelub, setLacadoFreqRelub] = useState("");
+  const [lacadoSaved, setLacadoSaved] = useState(false);
+  const [lacadoError, setLacadoError] = useState("");
 
   const plantPrensas = planta ? prensas.filter(pr => pr.plantaId === planta.id) : [];
 
@@ -985,8 +1134,8 @@ export default function PlantaDetailPage({ params }: { params: Promise<{ id: str
       const [horasStr, minsStr] = disponibleStr.split(":");
       const rawHoras = parseInt(horasStr, 10);
       const rawMins = parseInt(minsStr, 10);
-      setS1DisponibleHoras(isNaN(rawHoras) ? 0 : Math.min(6, Math.max(0, rawHoras)));
-      setS1DisponibleMinutos(isNaN(rawMins) ? 0 : Math.min(60, Math.max(0, rawMins)));
+      setS1DisponibleHoras(isNaN(rawHoras) || rawHoras < 1 ? 1 : Math.min(8, Math.max(1, rawHoras)));
+      setS1DisponibleMinutos(isNaN(rawMins) ? 0 : Math.min(59, Math.max(0, rawMins)));
       setS1ProdMensual(selectedPrensa.produccionMensual?.toString() || "");
 
 
@@ -998,8 +1147,85 @@ export default function PlantaDetailPage({ params }: { params: Promise<{ id: str
       setPullerForma(pull?.formaAplicacion || "");
       setPullerProdComp(pull?.productoCompetidorId || "");
 
+      let extra: any = {};
+      try {
+        if (pull?.notes) {
+          extra = JSON.parse(pull.notes);
+        }
+      } catch (e) {
+        console.error("Error parsing puller notes JSON:", e);
+      }
+      setPullerEstado(extra.estado || "desconocido");
+      setPullerProdCompNombre(extra.productoCompetidorNombre || "");
+      
+      const prov = extra.proveedorCompetencia || "";
+      setPullerCompetidorNombre(prov);
+      if (prov === "") {
+        setSelectedPullerCompetidorDropdown("");
+        setCustomPullerCompetidorInput("");
+      } else if (COMPETIDOR_OPTIONS.includes(prov)) {
+        setSelectedPullerCompetidorDropdown(prov);
+        setCustomPullerCompetidorInput("");
+      } else {
+        setSelectedPullerCompetidorDropdown("Otro competidor");
+        setCustomPullerCompetidorInput(prov);
+      }
+      setPullerProdInt(extra.productoInterlubActivoId || "");
+      setPullerConsumo(extra.consumoEstimado || "");
+      setPullerConsumoUnidad(extra.consumoUnidad || "Lt");
+      setPullerFrecuencia(extra.frecuenciaAplicacion || "");
+      setPullerFreqRelub(extra.frecuenciaRelubricacionDias || "");
+
+      const app7 = selectedPrensa.aplicaciones?.find(a => a.catalogoAplicacionId === "app-7");
+      setUbicacionSierra((app7?.camposEspeciales?.ubicacion_sierra as any) || "");
+
       const ovenApp = selectedPrensa.aplicaciones?.find(a => a.catalogoAplicacionId === "app-10");
-      setHornoMov((ovenApp?.camposEspeciales?.sistema_movimiento as string) || "");
+      const ovenExtra: any = ovenApp?.camposEspeciales || {};
+      setHornoCantidad(ovenExtra.cantidad_hornos?.toString() || "1");
+      setHornoMov(ovenExtra.sistema_movimiento || "");
+      setHornoEstado(ovenApp?.estado || "desconocido");
+      setHornoProdCompNombre(ovenExtra.productoCompetidorNombre || "");
+      const ovenProv = ovenExtra.proveedorCompetencia || "";
+      setHornoCompetidorNombre(ovenProv);
+      if (ovenProv === "") {
+        setSelectedHornoCompetidorDropdown("");
+        setCustomHornoCompetidorInput("");
+      } else if (COMPETIDOR_OPTIONS.includes(ovenProv)) {
+        setSelectedHornoCompetidorDropdown(ovenProv);
+        setCustomHornoCompetidorInput("");
+      } else {
+        setSelectedHornoCompetidorDropdown("Otro competidor");
+        setCustomHornoCompetidorInput(ovenProv);
+      }
+      setHornoProdInt(ovenApp?.productoInterlubActivoId || "");
+      setHornoMetodo(ovenApp?.metodoAplicacion || "");
+      setHornoConsumo(ovenApp?.consumoEstimado?.toString() || "");
+      setHornoConsumoUnidad(ovenApp?.consumoUnidad || "Lt");
+      setHornoFreqRelub(ovenExtra.frecuenciaRelubricacionDias || "");
+
+      const lacadoApp = selectedPrensa.aplicaciones?.find(a => a.catalogoAplicacionId === "app-18");
+      const lacadoExtra: any = lacadoApp?.camposEspeciales || {};
+      setLacadoTempMax(lacadoExtra.temperatura_maxima?.toString() || "");
+      setLacadoTiempoUso(lacadoExtra.tiempo_uso?.toString() || "8");
+      setLacadoEstado(lacadoApp?.estado || "desconocido");
+      setLacadoProdCompNombre(lacadoExtra.productoCompetidorNombre || "");
+      const lacadoProv = lacadoExtra.proveedorCompetencia || "";
+      setLacadoCompetidorNombre(lacadoProv);
+      if (lacadoProv === "") {
+        setSelectedLacadoCompetidorDropdown("");
+        setCustomLacadoCompetidorInput("");
+      } else if (COMPETIDOR_OPTIONS.includes(lacadoProv)) {
+        setSelectedLacadoCompetidorDropdown(lacadoProv);
+        setCustomLacadoCompetidorInput("");
+      } else {
+        setSelectedLacadoCompetidorDropdown("Otro competidor");
+        setCustomLacadoCompetidorInput(lacadoProv);
+      }
+      setLacadoProdInt(lacadoApp?.productoInterlubActivoId || "");
+      setLacadoMetodo(lacadoApp?.metodoAplicacion || "");
+      setLacadoConsumo(lacadoApp?.consumoEstimado?.toString() || "");
+      setLacadoConsumoUnidad(lacadoApp?.consumoUnidad || "Lt");
+      setLacadoFreqRelub(lacadoExtra.frecuenciaRelubricacionDias || "");
 
       // Initialize Section 2 cut type state
       const app1 = selectedPrensa.aplicaciones?.find(a => a.catalogoAplicacionId === "app-1");
@@ -1049,6 +1275,33 @@ export default function PlantaDetailPage({ params }: { params: Promise<{ id: str
     setS1CicloMax(`${String(s1DisponibleHoras).padStart(2, '0')}:${String(s1DisponibleMinutos).padStart(2, '0')}`);
   }, [s1DisponibleHoras, s1DisponibleMinutos]);
 
+  // Sync puller competitor states
+  useEffect(() => {
+    if (selectedPullerCompetidorDropdown === "Otro competidor") {
+      setPullerCompetidorNombre(customPullerCompetidorInput);
+    } else {
+      setPullerCompetidorNombre(selectedPullerCompetidorDropdown);
+    }
+  }, [selectedPullerCompetidorDropdown, customPullerCompetidorInput]);
+
+  // Sync horno competitor states
+  useEffect(() => {
+    if (selectedHornoCompetidorDropdown === "Otro competidor") {
+      setHornoCompetidorNombre(customHornoCompetidorInput);
+    } else {
+      setHornoCompetidorNombre(selectedHornoCompetidorDropdown);
+    }
+  }, [selectedHornoCompetidorDropdown, customHornoCompetidorInput]);
+
+  // Sync lacado competitor states
+  useEffect(() => {
+    if (selectedLacadoCompetidorDropdown === "Otro competidor") {
+      setLacadoCompetidorNombre(customLacadoCompetidorInput);
+    } else {
+      setLacadoCompetidorNombre(selectedLacadoCompetidorDropdown);
+    }
+  }, [selectedLacadoCompetidorDropdown, customLacadoCompetidorInput]);
+
 
   if (!planta) {
     return (
@@ -1067,66 +1320,225 @@ export default function PlantaDetailPage({ params }: { params: Promise<{ id: str
     if (!selectedPrensa) return "pending";
 
     switch (num) {
-      case 1:
-        if (selectedPrensa.oemId && selectedPrensa.capacidadTons) return "completed";
-        if (selectedPrensa.identificacionInterna || selectedPrensa.modelo) return "in_progress";
-        return "pending";
-      case 2:
+      case 1: {
+        const isSec1Complete = !!(
+          selectedPrensa.identificacionInterna &&
+          selectedPrensa.oemId &&
+          selectedPrensa.capacidadTons &&
+          selectedPrensa.diametroBillet &&
+          selectedPrensa.modelo &&
+          selectedPrensa.aleaciones && selectedPrensa.aleaciones.length > 0 &&
+          selectedPrensa.efectividadPct &&
+          selectedPrensa.tiempoCicloMin && selectedPrensa.tiempoCicloMin !== "00:00" &&
+          selectedPrensa.tiempoCicloMax && selectedPrensa.tiempoCicloMax !== "00:00"
+        );
+        if (isSec1Complete) return "completed";
+
+        const isSec1InProgress = !!(
+          selectedPrensa.identificacionInterna ||
+          selectedPrensa.oemId ||
+          selectedPrensa.capacidadTons ||
+          selectedPrensa.diametroBillet ||
+          selectedPrensa.modelo ||
+          (selectedPrensa.aleaciones && selectedPrensa.aleaciones.length > 0) ||
+          selectedPrensa.efectividadPct ||
+          (selectedPrensa.tiempoCicloMin && selectedPrensa.tiempoCicloMin !== "00:00") ||
+          (selectedPrensa.tiempoCicloMax && selectedPrensa.tiempoCicloMax !== "00:00")
+        );
+        return isSec1InProgress ? "in_progress" : "pending";
+      }
+      case 2: {
         const app1 = selectedPrensa.aplicaciones?.find(a => a.catalogoAplicacionId === "app-1");
         const app2 = selectedPrensa.aplicaciones?.find(a => a.catalogoAplicacionId === "app-2");
         const corteSeleccionado = app1?.camposEspeciales?.corte_seleccionado || app2?.camposEspeciales?.corte_seleccionado || "";
         if (corteSeleccionado === "ninguno") return "completed";
         if (corteSeleccionado === "shear") {
-          return app1 && app1.estado !== "desconocido" ? "completed" : "pending";
+          return isAppComplete(app1, "2.1") ? "completed" : (isAppInProgress(app1, "2.1") ? "in_progress" : "pending");
         }
         if (corteSeleccionado === "saw") {
-          return app2 && app2.estado !== "desconocido" ? "completed" : "pending";
+          return isAppComplete(app2, "2.2") ? "completed" : (isAppInProgress(app2, "2.2") ? "in_progress" : "pending");
         }
         return "pending";
-      case 3:
+      }
+      case 3: {
         const app3 = selectedPrensa.aplicaciones?.find(a => a.catalogoAplicacionId === "app-3");
         const app4 = selectedPrensa.aplicaciones?.find(a => a.catalogoAplicacionId === "app-4");
         const app5 = selectedPrensa.aplicaciones?.find(a => a.catalogoAplicacionId === "app-5");
 
-        const hasApp5Completed = app5 && app5.estado !== "desconocido";
+        const isApp5Complete = isAppComplete(app5, "3.3");
+        const isApp5InProgress = isAppInProgress(app5, "3.3");
         const lubricacionSeleccionada = (app3?.camposEspeciales?.lubricacion_seleccionada as string) || (app4?.camposEspeciales?.lubricacion_seleccionada as string) || "";
 
-        if (lubricacionSeleccionada === "ninguno") {
-          return hasApp5Completed ? "completed" : "in_progress";
-        } else if (lubricacionSeleccionada === "dummy") {
-          const hasApp3Completed = app3 && app3.estado !== "desconocido";
-          if (hasApp3Completed && hasApp5Completed) return "completed";
-          if (hasApp3Completed || hasApp5Completed) return "in_progress";
+        if (lubricacionSeleccionada === "dummy") {
+          const isApp3Complete = isAppComplete(app3, "3.1");
+          if (isApp3Complete && isApp5Complete) return "completed";
+          if (isApp3Complete || isApp5Complete || isAppInProgress(app3, "3.1") || isApp5InProgress) return "in_progress";
           return "pending";
         } else if (lubricacionSeleccionada === "billet") {
-          const hasApp4Completed = app4 && app4.estado !== "desconocido";
-          if (hasApp4Completed && hasApp5Completed) return "completed";
-          if (hasApp4Completed || hasApp5Completed) return "in_progress";
+          const isApp4Complete = isAppComplete(app4, "3.2");
+          if (isApp4Complete && isApp5Complete) return "completed";
+          if (isApp4Complete || isApp5Complete || isAppInProgress(app4, "3.2") || isApp5InProgress) return "in_progress";
           return "pending";
         } else {
-          if (hasApp5Completed) return "in_progress";
+          if (isApp5Complete || isApp5InProgress || isAppInProgress(app3, "3.1") || isAppInProgress(app4, "3.2")) return "in_progress";
           return "pending";
         }
-      case 4:
-        const hasPuller = selectedPrensa.pullers && selectedPrensa.pullers.length > 0 && selectedPrensa.pullers[0].mecanismo;
-        const s4App = selectedPrensa.aplicaciones?.find(a => a.catalogoAplicacionId === "app-7");
-        if (hasPuller && s4App && s4App.estado !== "desconocido") return "completed";
-        if (hasPuller || s4App) return "in_progress";
+      }
+      case 4: {
+        const pull = selectedPrensa.pullers && selectedPrensa.pullers.length > 0 ? selectedPrensa.pullers[0] : null;
+        let isPullerComplete = false;
+        let isPullerInProgress = false;
+
+        if (pull) {
+          let extra: any = {};
+          try {
+            if (pull.notes) extra = JSON.parse(pull.notes);
+          } catch (e) {}
+
+          const hasMecanismo = !!pull.mecanismo;
+          const hasTipoLub = pull.tipoLubricacion === "manual" || pull.tipoLubricacion === "automatico";
+          
+          let hasRelub = true;
+          if (pull.tipoLubricacion === "manual") {
+            const relub = Number(extra.frecuenciaRelubricacionDias);
+            hasRelub = !isNaN(relub) && relub >= 1 && relub <= 100;
+          }
+
+          const estado = extra.estado;
+          let hasLubDetails = false;
+          if (estado === "sin_lubricar") {
+            hasLubDetails = true;
+          } else if (estado === "lubricada_competencia") {
+            hasLubDetails = !!(extra.productoCompetidorNombre && extra.proveedorCompetencia);
+          } else if (estado === "lubricada_interlub") {
+            hasLubDetails = !!extra.productoInterlubActivoId;
+          }
+
+           const hasConsumo = !!(extra.consumoEstimado && Number(extra.consumoEstimado) >= 1 && Number(extra.consumoEstimado) <= 20);
+           const hasUnidad = !!extra.consumoUnidad;
+ 
+           isPullerComplete = !!(
+             pull.cantidad && Number(pull.cantidad) >= 1 &&
+             hasMecanismo &&
+             hasTipoLub &&
+             hasRelub &&
+             hasLubDetails &&
+             (estado === "sin_lubricar" || (hasConsumo && hasUnidad))
+           );
+ 
+           isPullerInProgress = !!(
+             (pull.cantidad && pull.cantidad > 1) ||
+             hasMecanismo ||
+             pull.tipoLubricacion ||
+             estado ||
+             extra.productoCompetidorNombre ||
+             extra.proveedorCompetencia ||
+             extra.productoInterlubActivoId ||
+             extra.consumoEstimado ||
+             extra.consumoUnidad ||
+             extra.frecuenciaRelubricacionDias
+           );
+        }
+
+        const app7 = selectedPrensa.aplicaciones?.find(a => a.catalogoAplicacionId === "app-7");
+        const ubicacionSierra = (app7?.camposEspeciales?.ubicacion_sierra as string) || "";
+        
+        const sierraComplete = isAppComplete(app7, "4.1");
+        const sierraInProgress = isAppInProgress(app7, "4.1");
+        const hasUbicacion = ubicacionSierra === "incluida" || ubicacionSierra === "separada";
+
+        if (isPullerComplete && sierraComplete && hasUbicacion) return "completed";
+        if (isPullerInProgress || sierraInProgress || ubicacionSierra !== "") return "in_progress";
         return "pending";
-      case 5:
-        const s5App = selectedPrensa.aplicaciones?.find(a => a.catalogoAplicacionId === "app-8");
-        if (s5App && s5App.estado !== "desconocido") return "completed";
+      }
+      case 5: {
+        const app10 = selectedPrensa.aplicaciones?.find(a => a.catalogoAplicacionId === "app-10");
+        if (!app10) return "pending";
+        const extra: any = app10.camposEspeciales || {};
+        const isHornoComplete = (() => {
+          const qty = extra.cantidad_hornos;
+          const mov = extra.sistema_movimiento;
+          const estado = app10.estado;
+          if (!qty || !mov || !estado || estado === "desconocido") return false;
+          if (estado === "sin_lubricar") return true;
+          
+          // Lubricated
+          const hasBrand = !!(extra.productoCompetidorNombre || app10.productoInterlubActivoId);
+          const hasCompetitorCompany = estado === "lubricada_competencia" ? !!extra.proveedorCompetencia : true;
+          const hasMetodo = !!app10.metodoAplicacion;
+          const hasConsumo = app10.consumoEstimado && Number(app10.consumoEstimado) >= 1 && Number(app10.consumoEstimado) <= 20;
+          const hasFreq = app10.metodoAplicacion === "manual" ? (extra.frecuenciaRelubricacionDias && Number(extra.frecuenciaRelubricacionDias) >= 1 && Number(extra.frecuenciaRelubricacionDias) <= 100) : true;
+          return !!(hasBrand && hasCompetitorCompany && hasMetodo && hasConsumo && hasFreq);
+        })();
+
+        const isHornoInProgress = (() => {
+          const qty = extra.cantidad_hornos;
+          const mov = extra.sistema_movimiento;
+          const estado = app10.estado;
+          return !!(
+            (qty && qty > 1) ||
+            mov ||
+            (estado && estado !== "desconocido") ||
+            extra.productoCompetidorNombre ||
+            extra.proveedorCompetencia ||
+            app10.productoInterlubActivoId ||
+            app10.metodoAplicacion ||
+            app10.consumoEstimado ||
+            extra.frecuenciaRelubricacionDias
+          );
+        })();
+
+        if (isHornoComplete) return "completed";
+        if (isHornoInProgress) return "in_progress";
         return "pending";
-      case 6:
-        const s6App = selectedPrensa.aplicaciones?.find(a => a.catalogoAplicacionId === "app-9");
-        if (s6App && s6App.estado !== "desconocido") return "completed";
+      }
+      case 6: {
+        const app18 = selectedPrensa.aplicaciones?.find(a => a.catalogoAplicacionId === "app-18");
+        if (!app18) return "pending";
+        const extra: any = app18.camposEspeciales || {};
+        const isLacadoComplete = (() => {
+          const temp = extra.temperatura_maxima;
+          const time = extra.tiempo_uso;
+          const estado = app18.estado;
+          if (!temp || isNaN(Number(temp)) || Number(temp) < 100 || Number(temp) > 400) return false;
+          if (!time || isNaN(Number(time)) || Number(time) < 1 || Number(time) > 8) return false;
+          if (!estado || estado === "desconocido") return false;
+          if (estado === "sin_lubricar") return true;
+
+          // Lubricated
+          const hasBrand = !!(extra.productoCompetidorNombre || app18.productoInterlubActivoId);
+          const hasCompetitorCompany = estado === "lubricada_competencia" ? !!extra.proveedorCompetencia : true;
+          const hasMetodo = !!app18.metodoAplicacion;
+          const hasConsumo = app18.consumoEstimado && Number(app18.consumoEstimado) >= 1 && Number(app18.consumoEstimado) <= 20;
+          const hasFreq = app18.metodoAplicacion === "manual" ? (extra.frecuenciaRelubricacionDias && Number(extra.frecuenciaRelubricacionDias) >= 1 && Number(extra.frecuenciaRelubricacionDias) <= 100) : true;
+          return !!(hasBrand && hasCompetitorCompany && hasMetodo && hasConsumo && hasFreq);
+        })();
+
+        const isLacadoInProgress = (() => {
+          const temp = extra.temperatura_maxima;
+          const time = extra.tiempo_uso;
+          const estado = app18.estado;
+          return !!(
+            temp ||
+            time ||
+            (estado && estado !== "desconocido") ||
+            extra.productoCompetidorNombre ||
+            extra.proveedorCompetencia ||
+            app18.productoInterlubActivoId ||
+            app18.metodoAplicacion ||
+            app18.consumoEstimado ||
+            extra.frecuenciaRelubricacionDias
+          );
+        })();
+
+        if (isLacadoComplete) return "completed";
+        if (isLacadoInProgress) return "in_progress";
         return "pending";
-      case 7:
-        const s7App = selectedPrensa.aplicaciones?.find(a => a.catalogoAplicacionId === "app-10");
-        const hasOvenMov = s7App?.camposEspeciales?.sistema_movimiento;
-        if (s7App && s7App.estado !== "desconocido" && hasOvenMov) return "completed";
-        if (s7App || hasOvenMov) return "in_progress";
-        return "pending";
+      }
+      case 7: {
+        const app9 = selectedPrensa.aplicaciones?.find(a => a.catalogoAplicacionId === "app-9");
+        return isAppComplete(app9, "7.1") ? "completed" : (isAppInProgress(app9, "7.1") ? "in_progress" : "pending");
+      }
       default:
         return "pending";
     }
@@ -1137,9 +1549,25 @@ export default function PlantaDetailPage({ params }: { params: Promise<{ id: str
     { num: 2, title: "Sección 2 — Corte de Barra (Hot Shear [corte de barra/billet con cizalla] / Hot Saw [corte de barra/billet en caliente])", status: getSectionStatus(2) },
     { num: 3, title: "Sección 3 — Extrusión de Tocho", status: getSectionStatus(3) },
     { num: 4, title: "Sección 4 — Sierra de Corte en Caliente + Puller / Jalador", status: getSectionStatus(4) },
-    { num: 5, title: "Sección 5 — Mesa de Tensado (Stretcher)", status: getSectionStatus(5) },
-    { num: 6, title: "Sección 6 — Corte de Perfil en Frío", status: getSectionStatus(6) },
-    { num: 7, title: "Sección 7 — Horno de Envejecimiento (Tratamiento Térmico)", status: getSectionStatus(7) },
+    { num: 5, title: "Sección 5 — Horno de Envejecimiento (Tratamiento Térmico)", status: getSectionStatus(5) },
+    { num: 6, title: "Sección 6 — Horno de Lacado", status: getSectionStatus(6) },
+    { num: 7, title: (
+      <span style={{ display: "inline-flex", alignItems: "center", gap: "0.375rem" }}>
+        Sección 7 — Procesos de valor agregado a perfil de aluminio
+        <span 
+          style={{
+            width: 14, height: 14, borderRadius: "50%",
+            background: "var(--bg-elevated)", display: "inline-flex",
+            alignItems: "center", justifyContent: "center",
+            fontSize: "9px", fontWeight: 700, color: "var(--text-muted)",
+            border: "1px solid var(--bg-border)", cursor: "help"
+          }}
+          title="En esta sección se tienen que registrar procesos de corte de perfil de precisión con máquinas CNC, troquelados u otros procesos que se le realicen al perfil posterior al lacado."
+        >
+          ?
+        </span>
+      </span>
+    ), status: getSectionStatus(7) },
   ];
 
   const compOpts = PRODUCTOS_COMPETIDORES.map(p => ({ label: `${p.marca} — ${p.nombreProducto ?? ""}`, value: p.id }));
@@ -1162,6 +1590,7 @@ export default function PlantaDetailPage({ params }: { params: Promise<{ id: str
       nombreInterno: generatedName,
       identificacionInterna: `P-${String(s1IdInterno).padStart(2, '0')}`,
       oemId: s1OemId,
+      modelo: s1Modelo,
       capacidadTons: s1Capacidad ? Number(s1Capacidad) : undefined,
       diametroBillet: s1Diametro,
       aleaciones: s1SelectedAlloys,
@@ -1327,25 +1756,243 @@ export default function PlantaDetailPage({ params }: { params: Promise<{ id: str
     });
   };
 
+  const handleSaveUbicacionSierra = async (val: "incluida" | "separada") => {
+    if (!selectedPrensa) return;
+    setUbicacionSierra(val);
+
+    const app7 = selectedPrensa.aplicaciones?.find(a => a.catalogoAplicacionId === "app-7");
+    await saveAplicacion(selectedPrensa.id, {
+      appNum: "4.1",
+      catalogoId: "app-7",
+      areaId: "area-3",
+      estado: app7?.estado || "desconocido",
+      productoCompetidorId: app7?.productoCompetidorId || null,
+      productoInterlubActivoId: app7?.productoInterlubActivoId || null,
+      formaAplicacion: app7?.formaAplicacion || "",
+      metodoAplicacion: app7?.metodoAplicacion || null,
+      consumoEstimado: app7?.consumoEstimado || undefined,
+      consumoUnidad: app7?.consumoUnidad || "ml",
+      frecuenciaAplicacion: app7?.frecuenciaAplicacion || "",
+      camposEspeciales: { ...app7?.camposEspeciales, ubicacion_sierra: val }
+    });
+  };
+
+  const handleResetUbicacionSierra = async () => {
+    if (!selectedPrensa) return;
+    setUbicacionSierra("");
+
+    const app7 = selectedPrensa.aplicaciones?.find(a => a.catalogoAplicacionId === "app-7");
+    await saveAplicacion(selectedPrensa.id, {
+      appNum: "4.1",
+      catalogoId: "app-7",
+      areaId: "area-3",
+      estado: app7?.estado || "desconocido",
+      productoCompetidorId: app7?.productoCompetidorId || null,
+      productoInterlubActivoId: app7?.productoInterlubActivoId || null,
+      formaAplicacion: app7?.formaAplicacion || "",
+      metodoAplicacion: app7?.metodoAplicacion || null,
+      consumoEstimado: app7?.consumoEstimado || undefined,
+      consumoUnidad: app7?.consumoUnidad || "ml",
+      frecuenciaAplicacion: app7?.frecuenciaAplicacion || "",
+      camposEspeciales: { ...app7?.camposEspeciales, ubicacion_sierra: null }
+    });
+  };
+
   const handleSavePuller = () => {
+    setPullerError("");
+
+    // Validate Frecuencia de relubricación if manual is selected
+    if (pullerMecanismo && pullerLub === "manual") {
+      if (!pullerFreqRelub) {
+        setPullerError("Debe ingresar la frecuencia de relubricación.");
+        return;
+      }
+      const freqVal = Number(pullerFreqRelub);
+      if (isNaN(freqVal) || freqVal < 1 || freqVal > 100 || !Number.isInteger(freqVal)) {
+        setPullerError("La frecuencia de relubricación debe ser un número entero entre 1 y 100 días.");
+        return;
+      }
+    }
+
+    if (pullerEstado === "lubricada_competencia" || pullerEstado === "lubricada_interlub") {
+      if (!pullerConsumo) {
+        setPullerError("Debe ingresar el consumo estimado mensual.");
+        return;
+      }
+      const consVal = Number(pullerConsumo);
+      if (isNaN(consVal) || consVal < 1 || consVal > 20) {
+        setPullerError("El consumo estimado mensual debe ser un valor entre 1 y 20.");
+        return;
+      }
+    }
+
+    const notesObj = {
+      estado: pullerEstado,
+      productoCompetidorNombre: pullerProdCompNombre,
+      proveedorCompetencia: pullerCompetidorNombre,
+      productoInterlubActivoId: pullerProdInt,
+      consumoEstimado: pullerConsumo,
+      consumoUnidad: pullerConsumoUnidad,
+      frecuenciaRelubricacionDias: pullerFreqRelub
+    };
+
     savePuller(selectedPrensa.id, {
-      tipo: pullerTipo,
+      tipo: "Puller",
       cantidad: pullerCantidad ? Number(pullerCantidad) : 1,
       mecanismo: pullerMecanismo ? (pullerMecanismo as 'cadena' | 'cable') : undefined,
-      tipoLubricacion: pullerLub ? (pullerLub as 'manual' | 'automatico' | 'sin_lubricacion') : undefined,
+      tipoLubricacion: pullerLub ? (pullerLub as 'manual' | 'automatico') : undefined,
       formaAplicacion: pullerForma,
-      productoCompetidorId: pullerProdComp
+      productoCompetidorId: pullerProdComp || undefined,
+      notes: JSON.stringify(notesObj)
     });
     setPullerSaved(true);
     setOpenSections(prev => ({ ...prev, 4: false }));
     setTimeout(() => setPullerSaved(false), 2000);
   };
 
-  const handleSaveOven = () => {
-    saveHornoMovimiento(selectedPrensa.id, hornoMov as any);
+  const handleSaveOven = async () => {
+    setHornoError("");
+
+    if (!hornoMov) {
+      setHornoError("Debe seleccionar un sistema de movimiento del horno.");
+      return;
+    }
+
+    if (hornoEstado === "desconocido") {
+      setHornoError("Debe seleccionar el estado de la aplicación.");
+      return;
+    }
+
+    // Validate Frecuencia de relubricación if manual is selected
+    if (hornoEstado !== "sin_lubricar" && hornoMetodo === "manual") {
+      if (!hornoFreqRelub) {
+        setHornoError("Debe ingresar la frecuencia de relubricación.");
+        return;
+      }
+      const freqVal = Number(hornoFreqRelub);
+      if (isNaN(freqVal) || freqVal < 1 || freqVal > 100 || !Number.isInteger(freqVal)) {
+        setHornoError("La frecuencia de relubricación debe ser un número entero entre 1 y 100 días.");
+        return;
+      }
+    }
+
+    if (hornoEstado === "lubricada_competencia" || hornoEstado === "lubricada_interlub") {
+      if (!hornoConsumo) {
+        setHornoError("Debe ingresar el consumo estimado mensual.");
+        return;
+      }
+      const consVal = Number(hornoConsumo);
+      if (isNaN(consVal) || consVal < 1 || consVal > 20) {
+        setHornoError("El consumo estimado mensual debe ser un valor entre 1 y 20.");
+        return;
+      }
+    }
+
+    const camposEspeciales = {
+      sistema_movimiento: hornoMov || null,
+      cantidad_hornos: hornoCantidad ? Number(hornoCantidad) : 1,
+      productoCompetidorNombre: hornoProdCompNombre || null,
+      proveedorCompetencia: hornoCompetidorNombre || null,
+      frecuenciaRelubricacionDias: hornoFreqRelub || null
+    };
+
+    await saveAplicacion(selectedPrensa.id, {
+      appNum: "5.1",
+      catalogoId: "app-10",
+      areaId: "area-6",
+      estado: hornoEstado,
+      productoCompetidorId: null,
+      productoInterlubActivoId: hornoProdInt || null,
+      metodoAplicacion: (hornoMetodo || null) as "manual" | "automatico" | "semiautomatico" | null,
+      consumoEstimado: hornoConsumo ? Number(hornoConsumo) : undefined,
+      consumoUnidad: hornoConsumoUnidad || "Lt",
+      frecuenciaAplicacion: "",
+      camposEspeciales
+    });
+
     setHornoSaved(true);
-    setOpenSections(prev => ({ ...prev, 7: false }));
+    setOpenSections(prev => ({ ...prev, 5: false })); // Section 5 is Envejecimiento
     setTimeout(() => setHornoSaved(false), 2000);
+  };
+
+  const handleSaveLacado = async () => {
+    setLacadoError("");
+
+    if (!lacadoTempMax) {
+      setLacadoError("Debe ingresar la temperatura máxima del horno.");
+      return;
+    }
+    const tempVal = Number(lacadoTempMax);
+    if (isNaN(tempVal) || tempVal < 100 || tempVal > 400) {
+      setLacadoError("La temperatura máxima debe ser entre 100 y 400 °C.");
+      return;
+    }
+
+    if (!lacadoTiempoUso) {
+      setLacadoError("Debe ingresar el tiempo de uso del horno.");
+      return;
+    }
+    const tiempoVal = Number(lacadoTiempoUso);
+    if (isNaN(tiempoVal) || tiempoVal < 1 || tiempoVal > 8) {
+      setLacadoError("El tiempo de uso debe estar entre 1 y 8 horas.");
+      return;
+    }
+
+    if (lacadoEstado === "desconocido") {
+      setLacadoError("Debe seleccionar el estado de la aplicación.");
+      return;
+    }
+
+    // Validate Frecuencia de relubricación if manual is selected
+    if (lacadoEstado !== "sin_lubricar" && lacadoMetodo === "manual") {
+      if (!lacadoFreqRelub) {
+        setLacadoError("Debe ingresar la frecuencia de relubricación.");
+        return;
+      }
+      const freqVal = Number(lacadoFreqRelub);
+      if (isNaN(freqVal) || freqVal < 1 || freqVal > 100 || !Number.isInteger(freqVal)) {
+        setLacadoError("La frecuencia de relubricación debe ser un número entero entre 1 y 100 días.");
+        return;
+      }
+    }
+
+    if (lacadoEstado === "lubricada_competencia" || lacadoEstado === "lubricada_interlub") {
+      if (!lacadoConsumo) {
+        setLacadoError("Debe ingresar el consumo estimado mensual.");
+        return;
+      }
+      const consVal = Number(lacadoConsumo);
+      if (isNaN(consVal) || consVal < 1 || consVal > 20) {
+        setLacadoError("El consumo estimado mensual debe ser un valor entre 1 y 20.");
+        return;
+      }
+    }
+
+    const camposEspeciales = {
+      temperatura_maxima: tempVal,
+      tiempo_uso: tiempoVal,
+      productoCompetidorNombre: lacadoProdCompNombre || null,
+      proveedorCompetencia: lacadoCompetidorNombre || null,
+      frecuenciaRelubricacionDias: lacadoFreqRelub || null
+    };
+
+    await saveAplicacion(selectedPrensa.id, {
+      appNum: "6.1",
+      catalogoId: "app-18",
+      areaId: "area-7",
+      estado: lacadoEstado,
+      productoCompetidorId: null,
+      productoInterlubActivoId: lacadoProdInt || null,
+      metodoAplicacion: (lacadoMetodo || null) as "manual" | "automatico" | "semiautomatico" | null,
+      consumoEstimado: lacadoConsumo ? Number(lacadoConsumo) : undefined,
+      consumoUnidad: lacadoConsumoUnidad || "Lt",
+      frecuenciaAplicacion: "",
+      camposEspeciales
+    });
+
+    setLacadoSaved(true);
+    setOpenSections(prev => ({ ...prev, 6: false })); // Section 6 is Lacado
+    setTimeout(() => setLacadoSaved(false), 2000);
   };
 
   const handleDeleteActivePrensa = async () => {
@@ -1640,6 +2287,17 @@ export default function PlantaDetailPage({ params }: { params: Promise<{ id: str
                         ))}
                       </select>
                     </FormField>
+                    <FormField label="Tipo de prensa" required>
+                      <select
+                        className="form-input"
+                        value={s1Modelo}
+                        onChange={e => setS1Modelo(e.target.value)}
+                      >
+                        <option value="">— Seleccionar tipo —</option>
+                        <option value="directa">Directa</option>
+                        <option value="indirecta">Indirecta</option>
+                      </select>
+                    </FormField>
                     <FormField label="Marca / OEM" required>
                       <select className="form-input" value={s1OemId} onChange={e => setS1OemId(e.target.value)}>
                         <option value="">— Seleccionar fabricante —</option>
@@ -1706,7 +2364,16 @@ export default function PlantaDetailPage({ params }: { params: Promise<{ id: str
                         value={s1Efectividad}
                         onChange={e => {
                           const clean = e.target.value.replace(/\D/g, "");
-                          setS1Efectividad(clean);
+                          if (clean === "") {
+                            setS1Efectividad("");
+                            return;
+                          }
+                          const val = parseInt(clean, 10);
+                          if (val >= 1 && val <= 300) {
+                            setS1Efectividad(clean);
+                          } else if (val > 300) {
+                            setS1Efectividad("300");
+                          }
                         }}
                         style={{ height: "36px" }}
                       />
@@ -1717,10 +2384,10 @@ export default function PlantaDetailPage({ params }: { params: Promise<{ id: str
                       tooltip={
                         <div style={{ display: "flex", flexDirection: "column", gap: "0.4rem" }}>
                           <p style={{ fontWeight: 700, color: "var(--text-primary)", fontSize: "0.8rem", borderBottom: "1px solid var(--bg-border)", paddingBottom: "0.25rem", margin: 0 }}>
-                            ⏱️ Tiempo de Ciclo de Extrusión
+                            Tiempo de Ciclo de Extrusión
                           </p>
                           <p style={{ color: "var(--text-secondary)", margin: 0, fontSize: "0.75rem", lineHeight: "1.4" }}>
-                            Es el tiempo total transcurrido desde que se inicia la extrusión de un tocho hasta que comienza el siguiente.
+                            Es el tiempo que tarda la prensa en extruir un tocho completo. Se mide con un cronómetro: se empieza a contar cuando el tocho comienza a extruirse, y se detiene cuando entra el siguiente tocho a la prensa. Ese tiempo total es el ciclo.
                           </p>
                         </div>
                       }
@@ -1861,14 +2528,14 @@ export default function PlantaDetailPage({ params }: { params: Promise<{ id: str
                     </FormField>
 
                     <FormField 
-                      label="Tiempo disponible por turno (8 horas)" 
+                      label="Tiempo disponible de prensa por turno (8 horas)" 
                       tooltip={
                         <div style={{ display: "flex", flexDirection: "column", gap: "0.4rem" }}>
                           <p style={{ fontWeight: 700, color: "var(--text-primary)", fontSize: "0.8rem", borderBottom: "1px solid var(--bg-border)", paddingBottom: "0.25rem", margin: 0 }}>
-                            ⏱️ Tiempo Disponible por Turno
+                            Tiempo Disponible de Prensa por Turno
                           </p>
                           <p style={{ color: "var(--text-secondary)", margin: 0, fontSize: "0.75rem", lineHeight: "1.4" }}>
-                            Es el tiempo programado disponible de la prensa en un turno de 8 horas (descontando comidas u otros paros fijos programados).
+                            Es el tiempo real en que la prensa está trabajando y produciendo perfil, dentro de las 8 horas del turno. No cuenta el tiempo perdido por preparación de la prensa, fallas mecánicas, cortes de energía, o cualquier paro que detenga la producción. Pregunta al operador.
                           </p>
                         </div>
                       }
@@ -1880,7 +2547,7 @@ export default function PlantaDetailPage({ params }: { params: Promise<{ id: str
                             <button
                               type="button"
                               className="btn-ghost"
-                              onClick={() => setS1DisponibleHoras(prev => Math.max(0, prev - 1))}
+                              onClick={() => setS1DisponibleHoras(prev => Math.max(1, prev - 1))}
                               style={{
                                 width: "36px",
                                 height: "36px",
@@ -1906,9 +2573,9 @@ export default function PlantaDetailPage({ params }: { params: Promise<{ id: str
                                 const clean = e.target.value.replace(/\D/g, "");
                                 const val = parseInt(clean, 10);
                                 if (isNaN(val)) {
-                                  setS1DisponibleHoras(0);
+                                  setS1DisponibleHoras(1);
                                 } else {
-                                  setS1DisponibleHoras(Math.min(6, Math.max(0, val)));
+                                  setS1DisponibleHoras(Math.min(8, Math.max(1, val)));
                                 }
                               }}
                               style={{ textAlign: "center", width: "100%", height: "36px" }}
@@ -1916,7 +2583,7 @@ export default function PlantaDetailPage({ params }: { params: Promise<{ id: str
                             <button
                               type="button"
                               className="btn-ghost"
-                              onClick={() => setS1DisponibleHoras(prev => Math.min(6, prev + 1))}
+                              onClick={() => setS1DisponibleHoras(prev => Math.min(8, prev + 1))}
                               style={{
                                 width: "36px",
                                 height: "36px",
@@ -1933,7 +2600,7 @@ export default function PlantaDetailPage({ params }: { params: Promise<{ id: str
                               +
                             </button>
                           </div>
-                          <span style={{ fontSize: "0.65rem", color: "var(--text-muted)", marginTop: "4px" }}>Horas (0-6)</span>
+                          <span style={{ fontSize: "0.65rem", color: "var(--text-muted)", marginTop: "4px" }}>Horas (1-8)</span>
                         </div>
 
                         <span style={{ fontSize: "1.2rem", fontWeight: 700, height: "36px", display: "flex", alignItems: "center", color: "var(--text-secondary)" }}>:</span>
@@ -2095,13 +2762,6 @@ export default function PlantaDetailPage({ params }: { params: Promise<{ id: str
               <div className={`accordion-wrapper ${openSections[3] ? "open" : ""}`}>
                 <div className="accordion-inner">
                   <div className="form-section-content" style={{ display: "flex", flexDirection: "column", gap: "1rem" }}>
-                    <div style={{ background: "rgba(198,139,53,0.06)", border: "1px solid rgba(198,139,53,0.15)", borderRadius: "8px", padding: "0.75rem" }}>
-                      <p style={{ fontSize: "0.775rem", color: "var(--accent-amber)", margin: 0 }}>
-                        <Info size={13} style={{ display: "inline", marginRight: "0.375rem" }} />
-                        <strong>Nota de Campo:</strong> Puedes registrar el consumo de Dummy Block, Tocho y Cuchilla individual o agrupado (Sección 3.3).
-                      </p>
-                    </div>
-
                     <FormField label="¿Qué elemento se lubrica en el proceso de extrusión?">
                       <div className="flex items-center gap-3 flex-wrap">
                         <RadioGroup
@@ -2110,10 +2770,9 @@ export default function PlantaDetailPage({ params }: { params: Promise<{ id: str
                           onChange={(val) => handleToggleLubricacionSec3(val as any)}
                           options={[
                             { label: "Dummy Block / Cabeza de Stem", value: "dummy" },
-                            { label: "Lingote / Tocho (Billet)", value: "billet" },
-                            { label: "Ninguno (Sin lubricación en Dummy/Billet)", value: "ninguno" }
+                            { label: "Lingote / Tocho (Billet)", value: "billet" }
                           ]}
-                          disabledOptions={tipoLubricacionSec3 ? ["dummy", "billet", "ninguno"].filter(o => o !== tipoLubricacionSec3) : []}
+                          disabledOptions={tipoLubricacionSec3 ? ["dummy", "billet"].filter(o => o !== tipoLubricacionSec3) : []}
                         />
                         {tipoLubricacionSec3 && (
                           <button
@@ -2136,14 +2795,6 @@ export default function PlantaDetailPage({ params }: { params: Promise<{ id: str
                       <AplicacionBlock num="3.2" titulo="Lingote / Tocho (Billet)" catalogoId="app-4" areaId="area-3" prensa={selectedPrensa} onSave={handleSaveAppWithCollapse} productoCompetidorOptions={compOpts} productoInterlubOptions={interlubOpts} />
                     )}
 
-                    {tipoLubricacionSec3 === "ninguno" && (
-                      <div style={{ background: "var(--bg-elevated)", border: "1px dashed var(--bg-border)", borderRadius: "8px", padding: "1.5rem", textAlign: "center" }}>
-                        <p style={{ fontSize: "0.85rem", color: "var(--text-secondary)", margin: 0 }}>
-                          Prensa configurada sin lubricación de Dummy Block ni de Billet.
-                        </p>
-                      </div>
-                    )}
-
                     {tipoLubricacionSec3 === "" && (
                       <div style={{ background: "var(--bg-elevated)", border: "1px dashed var(--bg-border)", borderRadius: "8px", padding: "1.5rem", textAlign: "center" }}>
                         <p style={{ fontSize: "0.85rem", color: "var(--text-muted)", margin: 0 }}>
@@ -2152,37 +2803,266 @@ export default function PlantaDetailPage({ params }: { params: Promise<{ id: str
                       </div>
                     )}
 
-                    <AplicacionBlock num="3.3" titulo="Cuchilla de Corte de Culotes / Galleta / Residuo" sinonimos={["Culotes", "Galleta", "Residuo"]} catalogoId="app-5" areaId="area-3" prensa={selectedPrensa} onSave={handleSaveAppWithCollapse} productoCompetidorOptions={compOpts} productoInterlubOptions={interlubOpts} />
+                    <AplicacionBlock num="3.3" titulo="Cuchilla de Corte de Culotes / Galleta / Residuo" catalogoId="app-5" areaId="area-3" prensa={selectedPrensa} onSave={handleSaveAppWithCollapse} productoCompetidorOptions={compOpts} productoInterlubOptions={interlubOpts} />
                   </div>
                 </div>
               </div>
             </div>
-
-            {/* Sec 4 */}
             <div id="sec-4" className="form-section">
               <SectionHeader num={4} title="Sección 4 — Sierra en Caliente + Puller / Jalador" status={secciones[3].status as any} isOpen={!!openSections[4]} onToggle={() => toggleSection(4)} />
               <div className={`accordion-wrapper ${openSections[4] ? "open" : ""}`}>
                 <div className="accordion-inner">
                   <div className="form-section-content">
+                    <AplicacionBlock num="4.1" titulo="Sierra de Corte de Perfil en Caliente" catalogoId="app-7" areaId="area-3" prensa={selectedPrensa} onSave={handleSaveAppWithCollapse} productoCompetidorOptions={compOpts} productoInterlubOptions={interlubOpts.filter(o => ["pi-12", "pi-13", "pi-14"].includes(o.value))} />
+                    
+                    {/* Hot Saw Location Selector */}
+                    <div style={{ background: "var(--bg-secondary)", border: "1px solid var(--bg-border)", borderRadius: "10px", padding: "1.25rem", marginBottom: "0.875rem" }}>
+                      <FormField label="¿La sierra en caliente está incluida en el puller/jalador o va por separado?">
+                        <div className="flex items-center gap-3 flex-wrap">
+                          <RadioGroup
+                            name={`ubicacionSierra-${selectedPrensa.id}`}
+                            value={ubicacionSierra}
+                            onChange={(val) => handleSaveUbicacionSierra(val as any)}
+                            options={[
+                              { label: "Incluida en el puller/jalador", value: "incluida" },
+                              { label: "Va por separado", value: "separada" }
+                            ]}
+                            disabledOptions={ubicacionSierra ? ["incluida", "separada"].filter(o => o !== ubicacionSierra) : []}
+                          />
+                          {ubicacionSierra && (
+                            <button
+                              type="button"
+                              className="btn-ghost btn-interactive"
+                              onClick={handleResetUbicacionSierra}
+                              style={{ fontSize: "0.75rem", padding: "0.25rem 0.5rem", borderRadius: "6px" }}
+                            >
+                              Reestablecer
+                            </button>
+                          )}
+                        </div>
+                      </FormField>
+                    </div>
+
                     {/* Puller sub-entity */}
                     <div style={{ background: "var(--bg-secondary)", border: "1px solid var(--bg-border)", borderRadius: "10px", padding: "1.25rem", marginBottom: "0.875rem" }}>
                       <div className="flex items-center gap-2 mb-3">
-                        <span style={{ fontSize: "0.85rem", fontWeight: 700, display: "flex", alignItems: "center", gap: "0.35rem" }}>
-                          <PullerIcon /> Puller / Jalador (Sub-entidad)
+                        <span style={{ fontSize: "0.85rem", fontWeight: 700 }}>
+                          Puller / Jalador
                         </span>
                       </div>
                       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem" }}>
-                        <FormField label="Tipo de puller">
-                          <input className="form-input" value={pullerTipo} onChange={e => setPullerTipo(e.target.value)} placeholder="Ej: modelo / descripción..." />
-                        </FormField>
                         <FormField label="Cantidad de pullers">
-                          <input className="form-input" type="number" value={pullerCantidad} onChange={e => setPullerCantidad(e.target.value)} min={1} />
+                          <select 
+                            className="form-input" 
+                            value={pullerCantidad} 
+                            onChange={e => setPullerCantidad(e.target.value)}
+                          >
+                            <option value="1">1</option>
+                            <option value="2">2</option>
+                            <option value="3">3</option>
+                            <option value="4">4</option>
+                            <option value="5">5</option>
+                          </select>
                         </FormField>
-                        <FormField label="Mecanismo de movimiento" hint="Crítico para tipo de lubricante">
+                        <FormField label="Mecanismo de movimiento">
                           <RadioGroup
                             name="puller-mec"
                             value={pullerMecanismo}
                             onChange={setPullerMecanismo}
+                            options={[
+                              { label: "Cadena", value: "cadena" },
+                              { label: "Cable", value: "cable" }
+                            ]}
+                          />
+                        </FormField>
+
+                        {pullerMecanismo && (
+                          <>
+                            <div style={{ gridColumn: "1 / -1", height: "1px", background: "var(--bg-border)", margin: "0.5rem 0" }} />
+
+                            <FormField label="Estado de la aplicación">
+                              <RadioGroup
+                                name="puller-estado"
+                                value={pullerEstado}
+                                onChange={(val) => setPullerEstado(val as any)}
+                                options={[
+                                  { label: "Lubricada por Interlub", value: "lubricada_interlub" },
+                                  { label: "Lubricada por Competencia", value: "lubricada_competencia" },
+                                  { label: "Sin lubricar", value: "sin_lubricar" }
+                                ]}
+                              />
+                            </FormField>
+
+                            {pullerEstado === "lubricada_competencia" && (
+                              <>
+                                <FormField label="Producto competencia">
+                                  <input 
+                                    className="form-input" 
+                                    placeholder="Nombre del producto competencia..."
+                                    value={pullerProdCompNombre}
+                                    onChange={e => setPullerProdCompNombre(e.target.value)}
+                                  />
+                                </FormField>
+                                <FormField label="Proveedor competencia">
+                                  <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
+                                    <select
+                                      className="form-input"
+                                      value={selectedPullerCompetidorDropdown}
+                                      onChange={e => setSelectedPullerCompetidorDropdown(e.target.value)}
+                                    >
+                                      <option value="">— Seleccionar competidor —</option>
+                                      {COMPETIDOR_OPTIONS.map(opt => (
+                                        <option key={opt} value={opt}>{opt}</option>
+                                      ))}
+                                      <option value="Otro competidor">Otro competidor (especificar)</option>
+                                    </select>
+                                    {selectedPullerCompetidorDropdown === "Otro competidor" && (
+                                      <input
+                                        className="form-input"
+                                        value={customPullerCompetidorInput}
+                                        onChange={e => setCustomPullerCompetidorInput(e.target.value)}
+                                        placeholder="Escriba el nombre del competidor..."
+                                        required
+                                      />
+                                    )}
+                                  </div>
+                                </FormField>
+                              </>
+                            )}
+
+                            {pullerEstado === "lubricada_interlub" && (
+                              <FormField label="Producto Interlub">
+                                <select 
+                                  className="form-input" 
+                                  value={pullerProdInt} 
+                                  onChange={e => setPullerProdInt(e.target.value)}
+                                >
+                                  <option value="">— Seleccionar producto Interlub —</option>
+                                  {interlubOpts.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                                </select>
+                              </FormField>
+                            )}
+
+                            {(pullerEstado === "lubricada_competencia" || pullerEstado === "lubricada_interlub") && (
+                              <>
+                                <FormField label="Tipo de lubricación">
+                                  <RadioGroup
+                                    name="puller-lub"
+                                    value={pullerLub}
+                                    onChange={setPullerLub}
+                                    options={[
+                                      { label: "Manual", value: "manual" },
+                                      { label: "Automático", value: "automatico" }
+                                    ]}
+                                  />
+                                </FormField>
+
+                                {pullerLub === "manual" && (
+                                  <FormField label="Frecuencia de relubricación (días)" hint="Días que transcurren hasta que se relubriquen las cadenas o cables (1-100)">
+                                    <input 
+                                      type="number"
+                                      className="form-input"
+                                      placeholder="Ingrese los días (1-100)..."
+                                      value={pullerFreqRelub}
+                                      min={1}
+                                      max={100}
+                                      onChange={e => {
+                                        const val = e.target.value;
+                                        if (val === "") {
+                                          setPullerFreqRelub("");
+                                          return;
+                                        }
+                                        const numVal = Number(val);
+                                        if (numVal >= 1) {
+                                          setPullerFreqRelub(val);
+                                        }
+                                      }}
+                                    />
+                                  </FormField>
+                                )}
+
+                                <FormField label="Consumo estimado mensual" hint="Valor de consumo mensual entre 1 y 20">
+                                  <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
+                                    <input
+                                      type="number"
+                                      className="form-input"
+                                      placeholder="Ej: 10"
+                                      value={pullerConsumo}
+                                      min={1}
+                                      max={20}
+                                      onChange={e => {
+                                        const val = e.target.value;
+                                        if (val === "") {
+                                          setPullerConsumo("");
+                                          return;
+                                        }
+                                        const numVal = Number(val);
+                                        if (numVal >= 1) {
+                                          setPullerConsumo(val);
+                                        }
+                                      }}
+                                      style={{ flex: 1 }}
+                                    />
+                                    <select
+                                      className="form-input"
+                                      value={pullerConsumoUnidad}
+                                      onChange={e => setPullerConsumoUnidad(e.target.value)}
+                                      style={{ width: "80px" }}
+                                    >
+                                      <option value="Lt">Lt</option>
+                                      <option value="Kg">Kg</option>
+                                    </select>
+                                  </div>
+                                </FormField>
+                              </>
+                            )}
+                          </>
+                        )}
+
+                        {pullerError && (
+                          <div style={{ gridColumn: "1 / -1", color: "var(--accent-red)", fontSize: "0.775rem", marginTop: "0.5rem" }}>
+                            ⚠ {pullerError}
+                          </div>
+                        )}
+
+                        <div style={{ gridColumn: "1/-1", display: "flex", alignItems: "center", gap: "2px", marginTop: "0.5rem" }}>
+                          <button className="btn-primary btn-interactive" onClick={handleSavePuller} style={{ fontSize: "0.775rem" }}>
+                            <Save size={12} /> Guardar Puller
+                          </button>
+                          {pullerSaved && <span style={{ marginLeft: "0.5rem", fontSize: "0.775rem", color: "var(--accent-green)" }}>✓ Guardado</span>}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Sec 5 */}
+            <div id="sec-5" className="form-section">
+              <SectionHeader num={5} title="Sección 5 — Horno de Envejecimiento (Tratamiento Térmico)" status={secciones[4].status as any} isOpen={!!openSections[5]} onToggle={() => toggleSection(5)} />
+              <div className={`accordion-wrapper ${openSections[5] ? "open" : ""}`}>
+                <div className="accordion-inner">
+                  <div className="form-section-content">
+                    <div style={{ background: "var(--bg-secondary)", border: "1px solid var(--bg-border)", borderRadius: "10px", padding: "1.25rem", marginBottom: "0.875rem" }}>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem" }}>
+                        <FormField label="Cantidad de hornos de envejecimiento">
+                          <select 
+                            className="form-input" 
+                            value={hornoCantidad} 
+                            onChange={e => setHornoCantidad(e.target.value)}
+                          >
+                            <option value="1">1</option>
+                            <option value="2">2</option>
+                            <option value="3">3</option>
+                            <option value="4">4</option>
+                          </select>
+                        </FormField>
+                        <FormField label="Sistema de movimiento del horno">
+                          <RadioGroup
+                            name="horno-mov"
+                            value={hornoMov}
+                            onChange={setHornoMov}
                             options={[
                               {
                                 label: (
@@ -2200,71 +3080,175 @@ export default function PlantaDetailPage({ params }: { params: Promise<{ id: str
                                 label: (
                                   <span className="flex items-center gap-1.5">
                                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                      <path d="M18.36 6.64a9 9 0 1 1-12.73 0" />
-                                      <line x1="12" y1="2" x2="12" y2="12" />
+                                      <circle cx="12" cy="12" r="10" />
+                                      <circle cx="12" cy="12" r="3" />
                                     </svg>
-                                    Cable
+                                    Rodajas
                                   </span>
                                 ),
-                                value: "cable"
+                                value: "rodajas"
                               },
                             ]}
                           />
-                          {pullerMecanismo === "cadena" && (
-                            <div style={{ marginTop: "0.5rem", padding: "0.5rem", background: "rgba(30,141,84,0.08)", border: "1px solid rgba(30,141,84,0.2)", borderRadius: "7px" }}>
-                              <p style={{ fontSize: "0.72rem", color: "var(--accent-green)" }}>
-                                ⚡ Cadena detectada ➔ Se recomienda aceite penetrante <strong>Interchain HT-200</strong>
-                              </p>
-                            </div>
-                          )}
-                          {pullerMecanismo === "cable" && (
-                            <div style={{ marginTop: "0.5rem", padding: "0.5rem", background: "rgba(124,82,165,0.08)", border: "1px solid rgba(124,82,165,0.2)", borderRadius: "7px" }}>
-                              <p style={{ fontSize: "0.72rem", color: "var(--accent-purple)" }}>
-                                ⚡ Cable detectado ➔ Se recomienda grasa de cable Interlub
-                              </p>
-                            </div>
-                          )}
                         </FormField>
-                        <FormField label="Tipo de lubricación">
-                          <RadioGroup
-                            name="puller-lub"
-                            value={pullerLub}
-                            onChange={setPullerLub}
-                            options={[
-                              { label: "Manual", value: "manual" },
-                              { label: "Automático", value: "automatico" },
-                              { label: "Sin lubricación", value: "sin_lubricacion" },
-                            ]}
-                          />
-                        </FormField>
-                        <div style={{ gridColumn: "1 / -1" }}>
-                          <label className="form-label">Producto competidor utilizado actualmente</label>
-                          <select className="form-input" value={pullerProdComp} onChange={e => setPullerProdComp(e.target.value)}>
-                            <option value="">— Seleccionar producto competencia —</option>
-                            {compOpts.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
-                          </select>
+
+                        {hornoMov && (
+                          <>
+                            <div style={{ gridColumn: "1 / -1", height: "1px", background: "var(--bg-border)", margin: "0.5rem 0" }} />
+
+                            <FormField label="Estado de la aplicación">
+                              <RadioGroup
+                                name="horno-estado"
+                                value={hornoEstado}
+                                onChange={(val) => setHornoEstado(val as any)}
+                                options={[
+                                  { label: "Lubricada por Interlub", value: "lubricada_interlub" },
+                                  { label: "Lubricada por Competencia", value: "lubricada_competencia" },
+                                  { label: "Sin lubricar", value: "sin_lubricar" }
+                                ]}
+                              />
+                            </FormField>
+
+                            {hornoEstado === "lubricada_competencia" && (
+                              <>
+                                <FormField label="Producto competencia">
+                                  <input 
+                                    className="form-input" 
+                                    placeholder="Nombre del producto competencia..."
+                                    value={hornoProdCompNombre}
+                                    onChange={e => setHornoProdCompNombre(e.target.value)}
+                                  />
+                                </FormField>
+                                <FormField label="Proveedor competencia">
+                                  <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
+                                    <select
+                                      className="form-input"
+                                      value={selectedHornoCompetidorDropdown}
+                                      onChange={e => setSelectedHornoCompetidorDropdown(e.target.value)}
+                                    >
+                                      <option value="">— Seleccionar competidor —</option>
+                                      {COMPETIDOR_OPTIONS.map(opt => (
+                                        <option key={opt} value={opt}>{opt}</option>
+                                      ))}
+                                      <option value="Otro competidor">Otro competidor (especificar)</option>
+                                    </select>
+                                    {selectedHornoCompetidorDropdown === "Otro competidor" && (
+                                      <input
+                                        className="form-input"
+                                        value={customHornoCompetidorInput}
+                                        onChange={e => setCustomHornoCompetidorInput(e.target.value)}
+                                        placeholder="Escriba el nombre del competidor..."
+                                        required
+                                      />
+                                    )}
+                                  </div>
+                                </FormField>
+                              </>
+                            )}
+
+                            {hornoEstado === "lubricada_interlub" && (
+                              <FormField label="Producto Interlub">
+                                <select 
+                                  className="form-input" 
+                                  value={hornoProdInt} 
+                                  onChange={e => setHornoProdInt(e.target.value)}
+                                >
+                                  <option value="">— Seleccionar producto Interlub —</option>
+                                  {interlubOpts.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                                </select>
+                              </FormField>
+                            )}
+
+                            {(hornoEstado === "lubricada_competencia" || hornoEstado === "lubricada_interlub") && (
+                              <>
+                                <FormField label="Tipo de lubricación">
+                                  <RadioGroup
+                                    name="horno-lub"
+                                    value={hornoMetodo}
+                                    onChange={setHornoMetodo}
+                                    options={[
+                                      { label: "Manual", value: "manual" },
+                                      { label: "Automático", value: "automatico" }
+                                    ]}
+                                  />
+                                </FormField>
+
+                                {hornoMetodo === "manual" && (
+                                  <FormField label="Frecuencia de relubricación (días)" hint="Días que transcurren hasta que se relubriquen las cadenas o rodajas (1-100)">
+                                    <input 
+                                      type="number"
+                                      className="form-input"
+                                      placeholder="Ingrese los días (1-100)..."
+                                      value={hornoFreqRelub}
+                                      min={1}
+                                      max={100}
+                                      onChange={e => {
+                                        const val = e.target.value;
+                                        if (val === "") {
+                                          setHornoFreqRelub("");
+                                          return;
+                                        }
+                                        const numVal = Number(val);
+                                        if (numVal >= 1) {
+                                          setHornoFreqRelub(val);
+                                        }
+                                      }}
+                                    />
+                                  </FormField>
+                                )}
+
+                                <FormField label="Consumo estimado mensual" hint="Valor de consumo mensual entre 1 y 20">
+                                  <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
+                                    <input
+                                      type="number"
+                                      className="form-input"
+                                      placeholder="Ej: 10"
+                                      value={hornoConsumo}
+                                      min={1}
+                                      max={20}
+                                      onChange={e => {
+                                        const val = e.target.value;
+                                        if (val === "") {
+                                          setHornoConsumo("");
+                                          return;
+                                        }
+                                        const numVal = Number(val);
+                                        if (numVal >= 1) {
+                                          setHornoConsumo(val);
+                                        }
+                                      }}
+                                      style={{ flex: 1 }}
+                                    />
+                                    <select
+                                      className="form-input"
+                                      value={hornoConsumoUnidad}
+                                      onChange={e => setHornoConsumoUnidad(e.target.value)}
+                                      style={{ width: "80px" }}
+                                    >
+                                      <option value="Lt">Lt</option>
+                                      <option value="Kg">Kg</option>
+                                    </select>
+                                  </div>
+                                </FormField>
+                              </>
+                            )}
+                          </>
+                        )}
+                      </div>
+
+                      {hornoError && (
+                        <div style={{ color: "var(--accent-red)", fontSize: "0.775rem", marginTop: "0.5rem" }}>
+                          ⚠ {hornoError}
                         </div>
-                        <div style={{ gridColumn: "1/-1", display: "flex", alignItems: "center", gap: "2px" }}>
-                          <button className="btn-primary btn-interactive" onClick={handleSavePuller} style={{ fontSize: "0.775rem" }}>
-                            <Save size={12} /> Guardar Puller
-                          </button>
-                          {pullerSaved && <span style={{ marginLeft: "0.5rem", fontSize: "0.775rem", color: "var(--accent-green)" }}>✓ Guardado</span>}
-                        </div>
+                      )}
+
+                      <div style={{ display: "flex", alignItems: "center", gap: "2px", marginTop: "1rem" }}>
+                        <button onClick={handleSaveOven} className="btn-primary btn-interactive" style={{ fontSize: "0.775rem" }}>
+                          <Save size={12} /> Guardar Horno Envejecimiento
+                        </button>
+                        {hornoSaved && <span style={{ marginLeft: "0.5rem", fontSize: "0.775rem", color: "var(--accent-green)" }}>✓ Guardado</span>}
                       </div>
                     </div>
-                    <AplicacionBlock num="4.1" titulo="Sierra de Corte de Perfil en Caliente" catalogoId="app-7" areaId="area-3" prensa={selectedPrensa} onSave={handleSaveAppWithCollapse} productoCompetidorOptions={compOpts} productoInterlubOptions={interlubOpts} />
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Sec 5 */}
-            <div id="sec-5" className="form-section">
-              <SectionHeader num={5} title="Sección 5 — Mesa de Tensado (Stretcher)" status={secciones[4].status as any} isOpen={!!openSections[5]} onToggle={() => toggleSection(5)} />
-              <div className={`accordion-wrapper ${openSections[5] ? "open" : ""}`}>
-                <div className="accordion-inner">
-                  <div className="form-section-content">
-                    <AplicacionBlock num="5.1" titulo="Mesa de Tensado (Stretcher)" catalogoId="app-8" areaId="area-4" prensa={selectedPrensa} onSave={handleSaveAppWithCollapse} productoCompetidorOptions={compOpts} productoInterlubOptions={interlubOpts} />
                   </div>
                 </div>
               </div>
@@ -2272,8 +3256,212 @@ export default function PlantaDetailPage({ params }: { params: Promise<{ id: str
 
             {/* Sec 6 */}
             <div id="sec-6" className="form-section">
-              <SectionHeader num={6} title="Sección 6 — Corte de Perfil en Frío" status={secciones[5].status as any} isOpen={!!openSections[6]} onToggle={() => toggleSection(6)} />
+              <SectionHeader num={6} title="Sección 6 — Horno de Lacado" status={secciones[5].status as any} isOpen={!!openSections[6]} onToggle={() => toggleSection(6)} />
               <div className={`accordion-wrapper ${openSections[6] ? "open" : ""}`}>
+                <div className="accordion-inner">
+                  <div className="form-section-content">
+                    <div style={{ background: "var(--bg-secondary)", border: "1px solid var(--bg-border)", borderRadius: "10px", padding: "1.25rem", marginBottom: "0.875rem" }}>
+                      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: "1rem" }}>
+                        <FormField label="Temperatura máxima del horno (°C)" hint="Rango de 100 a 400 °C">
+                          <input 
+                            type="number"
+                            className="form-input"
+                            placeholder="Ej: 200"
+                            value={lacadoTempMax}
+                            min={100}
+                            max={400}
+                            onChange={e => {
+                              const val = e.target.value;
+                              if (val === "") {
+                                setLacadoTempMax("");
+                                return;
+                              }
+                              const numVal = Number(val);
+                              if (numVal >= 0) {
+                                setLacadoTempMax(val);
+                              }
+                            }}
+                          />
+                        </FormField>
+                        <FormField label="Tiempo de uso del horno por turno" hint="Referencia basada en turno de 8 horas">
+                          <select 
+                            className="form-input" 
+                            value={lacadoTiempoUso} 
+                            onChange={e => setLacadoTiempoUso(e.target.value)}
+                          >
+                            <option value="1">1 hora</option>
+                            <option value="2">2 horas</option>
+                            <option value="3">3 horas</option>
+                            <option value="4">4 horas</option>
+                            <option value="5">5 horas</option>
+                            <option value="6">6 horas</option>
+                            <option value="7">7 horas</option>
+                            <option value="8">8 horas (Turno completo)</option>
+                          </select>
+                        </FormField>
+
+                        <div style={{ gridColumn: "1 / -1", height: "1px", background: "var(--bg-border)", margin: "0.5rem 0" }} />
+
+                        <FormField label="Estado de la aplicación">
+                          <RadioGroup
+                            name="lacado-estado"
+                            value={lacadoEstado}
+                            onChange={(val) => setLacadoEstado(val as any)}
+                            options={[
+                              { label: "Lubricada por Interlub", value: "lubricada_interlub" },
+                              { label: "Lubricada por Competencia", value: "lubricada_competencia" },
+                              { label: "Sin lubricar", value: "sin_lubricar" }
+                            ]}
+                          />
+                        </FormField>
+
+                        {lacadoEstado === "lubricada_competencia" && (
+                          <>
+                            <FormField label="Producto competencia">
+                              <input 
+                                className="form-input" 
+                                placeholder="Nombre del producto competencia..."
+                                value={lacadoProdCompNombre}
+                                onChange={e => setLacadoProdCompNombre(e.target.value)}
+                              />
+                            </FormField>
+                            <FormField label="Proveedor competencia">
+                              <div style={{ display: "flex", flexDirection: "column", gap: "0.5rem" }}>
+                                <select
+                                  className="form-input"
+                                  value={selectedLacadoCompetidorDropdown}
+                                  onChange={e => setSelectedLacadoCompetidorDropdown(e.target.value)}
+                                >
+                                  <option value="">— Seleccionar competidor —</option>
+                                  {COMPETIDOR_OPTIONS.map(opt => (
+                                    <option key={opt} value={opt}>{opt}</option>
+                                  ))}
+                                  <option value="Otro competidor">Otro competidor (especificar)</option>
+                                </select>
+                                {selectedLacadoCompetidorDropdown === "Otro competidor" && (
+                                  <input
+                                    className="form-input"
+                                    value={customLacadoCompetidorInput}
+                                    onChange={e => setCustomLacadoCompetidorInput(e.target.value)}
+                                    placeholder="Escriba el nombre del competidor..."
+                                    required
+                                  />
+                                )}
+                              </div>
+                            </FormField>
+                          </>
+                        )}
+
+                        {lacadoEstado === "lubricada_interlub" && (
+                          <FormField label="Producto Interlub">
+                            <select 
+                              className="form-input" 
+                              value={lacadoProdInt} 
+                              onChange={e => setLacadoProdInt(e.target.value)}
+                            >
+                              <option value="">— Seleccionar producto Interlub —</option>
+                              {interlubOpts.map(o => <option key={o.value} value={o.value}>{o.label}</option>)}
+                            </select>
+                          </FormField>
+                        )}
+
+                        {(lacadoEstado === "lubricada_competencia" || lacadoEstado === "lubricada_interlub") && (
+                          <>
+                            <FormField label="Tipo de lubricación">
+                              <RadioGroup
+                                name="lacado-lub"
+                                value={lacadoMetodo}
+                                onChange={setLacadoMetodo}
+                                options={[
+                                  { label: "Manual", value: "manual" },
+                                  { label: "Automático", value: "automatico" }
+                                ]}
+                              />
+                            </FormField>
+
+                            {lacadoMetodo === "manual" && (
+                              <FormField label="Frecuencia de relubricación (días)" hint="Días que transcurren hasta que se relubriquen los componentes (1-100)">
+                                <input 
+                                  type="number"
+                                  className="form-input"
+                                  placeholder="Ingrese los días (1-100)..."
+                                  value={lacadoFreqRelub}
+                                  min={1}
+                                  max={100}
+                                  onChange={e => {
+                                    const val = e.target.value;
+                                    if (val === "") {
+                                      setLacadoFreqRelub("");
+                                      return;
+                                    }
+                                    const numVal = Number(val);
+                                    if (numVal >= 1) {
+                                      setLacadoFreqRelub(val);
+                                    }
+                                  }}
+                                />
+                              </FormField>
+                            )}
+
+                            <FormField label="Consumo estimado mensual" hint="Valor de consumo mensual entre 1 y 20">
+                              <div style={{ display: "flex", gap: "0.5rem", alignItems: "center" }}>
+                                <input
+                                  type="number"
+                                  className="form-input"
+                                  placeholder="Ej: 10"
+                                  value={lacadoConsumo}
+                                  min={1}
+                                  max={20}
+                                  onChange={e => {
+                                    const val = e.target.value;
+                                    if (val === "") {
+                                      setLacadoConsumo("");
+                                      return;
+                                    }
+                                    const numVal = Number(val);
+                                    if (numVal >= 1) {
+                                      setLacadoConsumo(val);
+                                    }
+                                  }}
+                                  style={{ flex: 1 }}
+                                />
+                                <select
+                                  className="form-input"
+                                  value={lacadoConsumoUnidad}
+                                  onChange={e => setLacadoConsumoUnidad(e.target.value)}
+                                  style={{ width: "80px" }}
+                                >
+                                  <option value="Lt">Lt</option>
+                                  <option value="Kg">Kg</option>
+                                </select>
+                              </div>
+                            </FormField>
+                          </>
+                        )}
+                      </div>
+
+                      {lacadoError && (
+                        <div style={{ color: "var(--accent-red)", fontSize: "0.775rem", marginTop: "0.5rem" }}>
+                          ⚠ {lacadoError}
+                        </div>
+                      )}
+
+                      <div style={{ display: "flex", alignItems: "center", gap: "2px", marginTop: "1rem" }}>
+                        <button onClick={handleSaveLacado} className="btn-primary btn-interactive" style={{ fontSize: "0.775rem" }}>
+                          <Save size={12} /> Guardar Horno Lacado
+                        </button>
+                        {lacadoSaved && <span style={{ marginLeft: "0.5rem", fontSize: "0.775rem", color: "var(--accent-green)" }}>✓ Guardado</span>}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            {/* Sec 7 */}
+            <div id="sec-7" className="form-section">
+              <SectionHeader num={7} title={secciones[6].title} status={secciones[6].status as any} isOpen={!!openSections[7]} onToggle={() => toggleSection(7)} />
+              <div className={`accordion-wrapper ${openSections[7] ? "open" : ""}`}>
                 <div className="accordion-inner">
                   <div className="form-section-content">
                     <div style={{ background: "rgba(59,117,165,0.06)", border: "1px solid rgba(59,117,165,0.15)", borderRadius: "8px", padding: "0.75rem", marginBottom: "0.5rem" }}>
@@ -2285,87 +3473,7 @@ export default function PlantaDetailPage({ params }: { params: Promise<{ id: str
                         💡 <strong>Nota de captura:</strong> Este proceso no corresponde directamente a las prensas de extrusión de aluminio. Las empresas normalmente cuentan con estas máquinas CNC en un área independiente de las prensas (por ejemplo, una planta puede tener 3 prensas de extrusión y 5 máquinas CNC). Se asocia en este formulario para consolidar el consumo a nivel planta.
                       </p>
                     </div>
-                    <AplicacionBlock num="6.1" titulo="Sierra de Corte de Perfil en Frío" catalogoId="app-9" areaId="area-5" prensa={selectedPrensa} onSave={handleSaveAppWithCollapse} productoCompetidorOptions={compOpts} productoInterlubOptions={interlubOpts} />
-                  </div>
-                </div>
-              </div>
-            </div>
-
-            {/* Sec 7 */}
-            <div id="sec-7" className="form-section">
-              <SectionHeader num={7} title="Sección 7 — Horno de Envejecimiento (Tratamiento Térmico)" status={secciones[6].status as any} isOpen={!!openSections[7]} onToggle={() => toggleSection(7)} />
-              <div className={`accordion-wrapper ${openSections[7] ? "open" : ""}`}>
-                <div className="accordion-inner">
-                  <div className="form-section-content">
-                    <div style={{ background: "var(--bg-secondary)", border: "1px solid var(--bg-border)", borderRadius: "10px", padding: "1.25rem", marginBottom: "0.875rem" }}>
-                      <FormField label="Sistema de movimiento del horno" hint="Determina directamente el tipo de lubricante recomendable">
-                        <RadioGroup
-                          name="horno-mov"
-                          value={hornoMov}
-                          onChange={setHornoMov}
-                          options={[
-                            {
-                              label: (
-                                <span className="flex items-center gap-1.5">
-                                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                    <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
-                                    <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
-                                  </svg>
-                                  Cadena
-                                </span>
-                              ),
-                              value: "cadena"
-                            },
-                            {
-                              label: (
-                                <span className="flex items-center gap-1.5">
-                                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                    <line x1="3" y1="10" x2="21" y2="10" />
-                                    <line x1="3" y1="14" x2="21" y2="14" />
-                                    <path d="M6 4v16M18 4v16" />
-                                  </svg>
-                                  Rieles
-                                </span>
-                              ),
-                              value: "rieles"
-                            },
-                            {
-                              label: (
-                                <span className="flex items-center gap-1.5">
-                                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                                    <circle cx="12" cy="12" r="10" />
-                                    <circle cx="12" cy="12" r="3" />
-                                  </svg>
-                                  Rodajas
-                                </span>
-                              ),
-                              value: "rodajas"
-                            },
-                          ]}
-                        />
-                        {hornoMov === "cadena" && (
-                          <div style={{ marginTop: "0.5rem", padding: "0.5rem", background: "rgba(204,0,0,0.08)", border: "1px solid rgba(204,0,0,0.2)", borderRadius: "7px" }}>
-                            <p style={{ fontSize: "0.72rem", color: "var(--interlub-red)" }}>
-                              ⚡ Cadena detectada ➔ Se recomienda aceite sintético alta temperatura <strong>Interchain HT-200</strong>
-                            </p>
-                          </div>
-                        )}
-                        {(hornoMov === "rieles" || hornoMov === "rodajas") && (
-                          <div style={{ marginTop: "0.5rem", padding: "0.5rem", background: "rgba(124,82,165,0.08)", border: "1px solid rgba(124,82,165,0.2)", borderRadius: "7px" }}>
-                            <p style={{ fontSize: "0.72rem", color: "var(--accent-purple)" }}>
-                              ⚡ Rieles/Rodajas detectados ➔ Se recomienda grasa de poliurea alta temperatura <strong>Intergrease HT-3</strong>
-                            </p>
-                          </div>
-                        )}
-                      </FormField>
-                      <div style={{ display: "flex", alignItems: "center", gap: "2px", marginTop: "1rem" }}>
-                        <button onClick={handleSaveOven} className="btn-primary btn-interactive" style={{ fontSize: "0.775rem" }}>
-                          <Save size={12} /> Guardar Movimiento
-                        </button>
-                        {hornoSaved && <span style={{ marginLeft: "0.5rem", fontSize: "0.775rem", color: "var(--accent-green)" }}>✓ Guardado</span>}
-                      </div>
-                    </div>
-                    <AplicacionBlock num="7.1" titulo="Horno de Envejecimiento" catalogoId="app-10" areaId="area-6" prensa={selectedPrensa} onSave={handleSaveAppWithCollapse} productoCompetidorOptions={compOpts} productoInterlubOptions={interlubOpts} />
+                    <AplicacionBlock num="7.1" titulo="Sierra de Corte de Perfil en Frío" catalogoId="app-9" areaId="area-5" prensa={selectedPrensa} onSave={handleSaveAppWithCollapse} productoCompetidorOptions={compOpts} productoInterlubOptions={interlubOpts} />
                   </div>
                 </div>
               </div>

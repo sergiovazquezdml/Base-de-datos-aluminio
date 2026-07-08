@@ -200,6 +200,7 @@ export interface Puller {
   productoCompetidor?: ProductoCompetidor;
 
   notas?: string;
+  notes?: string;
   deleted: boolean;
   createdAt: string;
 }
